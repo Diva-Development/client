@@ -564,7 +564,40 @@ export class Player {
 
         return this;
     }
+    /**
+     * Switch the player to a different voice channel
+     * @param voiceChannelId The ID of the new voice channel to switch to
+     * @param selfDeaf Whether the bot should be deafened in the new channel (optional)
+     * @param selfMute Whether the bot should be muted in the new channel (optional)
+     * @returns The player instance for chaining
+     */
+    public async switchVoiceChannel(voiceChannelId: string, selfDeaf?: boolean, selfMute?: boolean) {
+        if (!voiceChannelId) throw new RangeError("Voice Channel ID is required");
 
+        const oldVoiceChannelId = this.options.voiceChannelId;
+
+        await this.LavalinkManager.options.sendToShard(this.guildId, {
+            op: 4,
+            d: {
+                guild_id: this.guildId,
+                channel_id: voiceChannelId,
+                self_mute: selfMute ?? this.options.selfMute ?? false,
+                self_deaf: selfDeaf ?? this.options.selfDeaf ?? true,
+            }
+        });
+
+        // Update the options
+        this.options.voiceChannelId = voiceChannelId;
+        if (typeof selfMute === "boolean") this.options.selfMute = selfMute;
+        if (typeof selfDeaf === "boolean") this.options.selfDeaf = selfDeaf;
+
+        this.voiceChannelId = voiceChannelId;
+
+        // Emit an event for voice channel change
+        this.LavalinkManager.emit("playerMove", this, oldVoiceChannelId, voiceChannelId);
+
+        return this;
+    }
     /**
      * Connects the Player to the Voice Channel
      * @returns
