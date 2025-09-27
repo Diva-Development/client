@@ -3897,6 +3897,8 @@ var Player = class {
   async setVolume(volume, ignoreVolumeDecrementer = false) {
     volume = Number(volume);
     if (isNaN(volume)) throw new TypeError("Volume must be a number.");
+    const oldVolume = this.volume;
+    const oldStored = typeof this.queue.queueChanges?.volumeChanged === "function" ? this.queue.utils.toJSON() : null;
     this.volume = Math.round(Math.max(Math.min(volume, 1e3), 0));
     this.lavalinkVolume = Math.round(Math.max(Math.min(Math.round(
       this.LavalinkManager.options.playerOptions.volumeDecrementer && !ignoreVolumeDecrementer ? this.volume * this.LavalinkManager.options.playerOptions.volumeDecrementer : this.volume
@@ -3915,6 +3917,12 @@ var Player = class {
       await this.node.updatePlayer({ guildId: this.guildId, playerOptions: { volume: this.lavalinkVolume } });
     }
     this.ping.lavalink = Math.round((performance.now() - now) / 10) / 100;
+    if (typeof this.queue.queueChanges?.volumeChanged === "function") {
+      try {
+        this.queue.queueChanges.volumeChanged(this.guildId, oldVolume, this.volume, this, oldStored, this.queue.utils.toJSON());
+      } catch {
+      }
+    }
     return this;
   }
   /**
@@ -4000,11 +4008,19 @@ var Player = class {
     if (isNaN(position)) throw new RangeError("Position must be a number.");
     if (!this.queue.current.info.isSeekable || this.queue.current.info.isStream) throw new RangeError("Current Track is not seekable / a stream");
     if (position < 0 || position > this.queue.current.info.duration) position = Math.max(Math.min(position, this.queue.current.info.duration), 0);
+    const oldPosition = this.lastPosition;
+    const oldStored = typeof this.queue.queueChanges?.seeked === "function" ? this.queue.utils.toJSON() : null;
     this.lastPositionChange = Date.now();
     this.lastPosition = position;
     const now = performance.now();
     await this.node.updatePlayer({ guildId: this.guildId, playerOptions: { position } });
     this.ping.lavalink = Math.round((performance.now() - now) / 10) / 100;
+    if (typeof this.queue.queueChanges?.seeked === "function") {
+      try {
+        this.queue.queueChanges.seeked(this.guildId, this.queue.current, oldPosition, position, this, oldStored, this.queue.utils.toJSON());
+      } catch {
+      }
+    }
     return this;
   }
   /**
@@ -4504,7 +4520,7 @@ var LavalinkManager = class extends EventEmitter2 {
     }
     if (options?.queueOptions?.queueChangesWatcher) {
       const keys = Object.getOwnPropertyNames(Object.getPrototypeOf(options?.queueOptions?.queueChangesWatcher));
-      const requiredKeys = ["tracksAdd", "tracksRemoved", "shuffled"];
+      const requiredKeys = ["tracksAdd", "tracksRemoved", "shuffled", "seeked", "volumeChanged"];
       if (!requiredKeys.every((v) => keys.includes(v)) || !requiredKeys.every((v) => typeof options?.queueOptions?.queueChangesWatcher[v] === "function")) throw new SyntaxError(`The provided ManagerOption.DefaultQueueChangesWatcher, does not have all required functions: ${requiredKeys.join(", ")}`);
     }
     if (typeof options?.queueOptions?.maxPreviousTracks !== "number" || options?.queueOptions?.maxPreviousTracks < 0) options.queueOptions.maxPreviousTracks = 25;
