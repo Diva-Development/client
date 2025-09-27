@@ -379,6 +379,9 @@ export class Player {
 
         if (isNaN(volume)) throw new TypeError("Volume must be a number.");
 
+        const oldVolume = this.volume;
+        const oldStored = typeof (this.queue as any).queueChanges?.volumeChanged === "function" ? (this.queue as any).utils.toJSON() : null;
+
         this.volume = Math.round(Math.max(Math.min(volume, 1000), 0));
 
         this.lavalinkVolume = Math.round(Math.max(Math.min(Math.round(
@@ -400,6 +403,14 @@ export class Player {
             await this.node.updatePlayer({ guildId: this.guildId, playerOptions: { volume: this.lavalinkVolume } });
         }
         this.ping.lavalink = Math.round((performance.now() - now) / 10) / 100;
+
+        // emit volume watcher event if available
+        if (typeof (this.queue as any).queueChanges?.volumeChanged === "function" && this.queue.current) {
+            try { 
+                (this.queue as any).queueChanges.volumeChanged(this.guildId, this.queue.current, oldVolume, this.volume, this, oldStored, (this.queue as any).utils.toJSON()); 
+            } catch { /* */ }
+        }
+
         return this;
     }
     /**
