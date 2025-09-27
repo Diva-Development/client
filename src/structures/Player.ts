@@ -405,9 +405,9 @@ export class Player {
         this.ping.lavalink = Math.round((performance.now() - now) / 10) / 100;
 
         // emit volume watcher event if available
-        if (typeof (this.queue as any).queueChanges?.volumeChanged === "function" && this.queue.current) {
+        if (typeof (this.queue as any).queueChanges?.volumeChanged === "function") {
             try { 
-                (this.queue as any).queueChanges.volumeChanged(this.guildId, this.queue.current, oldVolume, this.volume, this, oldStored, (this.queue as any).utils.toJSON()); 
+                (this.queue as any).queueChanges.volumeChanged(this.guildId, oldVolume, this.volume, this, oldStored, (this.queue as any).utils.toJSON()); 
             } catch { /* */ }
         }
 

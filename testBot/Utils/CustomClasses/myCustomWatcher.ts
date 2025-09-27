@@ -23,10 +23,9 @@ export class myCustomWatcher implements QueueChangesWatcher {
         const voiceChannel = this.client.channels.cache.get(player.voiceChannelId)?.name || "Unknown Channel";
         console.log(`${guildName}: Track "${trackTitle}" seeked from ${Math.floor(oldPosition / 1000)}s to ${Math.floor(newPosition / 1000)}s in ${voiceChannel}`);
     }
-    volumeChanged(guildId, track, oldVolume, newVolume, player, oldStoredQueue, newStoredQueue) {
+    volumeChanged(guildId, oldVolume, newVolume, player, oldStoredQueue, newStoredQueue) {
         const guildName = this.client.guilds.cache.get(guildId)?.name || guildId;
-        const trackTitle = track.info.title || "Unknown Track";
         const voiceChannel = this.client.channels.cache.get(player.voiceChannelId)?.name || "Unknown Channel";
-        console.log(`${guildName}: Volume changed for "${trackTitle}" from ${oldVolume}% to ${newVolume}% in ${voiceChannel}`);
+        console.log(`${guildName}: Volume changed from ${oldVolume}% to ${newVolume}% in ${voiceChannel}`);
     }
 }
