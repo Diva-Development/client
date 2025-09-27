@@ -497,12 +497,22 @@ export class Player {
 
         if (position < 0 || position > this.queue.current.info.duration) position = Math.max(Math.min(position, this.queue.current.info.duration), 0);
 
+        const oldPosition = this.lastPosition;
+        const oldStored = typeof (this.queue as any).queueChanges?.seeked === "function" ? (this.queue as any).utils.toJSON() : null;
+
         this.lastPositionChange = Date.now();
         this.lastPosition = position;
 
         const now = performance.now();
         await this.node.updatePlayer({ guildId: this.guildId, playerOptions: { position } });
         this.ping.lavalink = Math.round((performance.now() - now) / 10) / 100;
+
+        // emit seek watcher event if available
+        if (typeof (this.queue as any).queueChanges?.seeked === "function") {
+            try { 
+                (this.queue as any).queueChanges.seeked(this.guildId, this.queue.current, oldPosition, position, this, oldStored, (this.queue as any).utils.toJSON()); 
+            } catch { /* */ }
+        }
 
         return this;
     }
