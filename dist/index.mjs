@@ -3788,6 +3788,12 @@ var Player = class {
         if (this.LavalinkManager.options.playerOptions.volumeDecrementer) vol *= this.LavalinkManager.options.playerOptions.volumeDecrementer;
         this.lavalinkVolume = Math.round(vol);
         options.volume = this.lavalinkVolume;
+        if (typeof this.queue.queueChanges?.volumeChanged === "function") {
+          try {
+            this.queue.queueChanges.volumeChanged(this.guildId, this);
+          } catch {
+          }
+        }
       }
       const track = Object.fromEntries(Object.entries({
         encoded: options.track.encoded,
@@ -3858,6 +3864,12 @@ var Player = class {
       if (this.LavalinkManager.options.playerOptions.volumeDecrementer) vol *= this.LavalinkManager.options.playerOptions.volumeDecrementer;
       this.lavalinkVolume = Math.round(vol);
       options.volume = this.lavalinkVolume;
+      if (typeof this.queue.queueChanges?.volumeChanged === "function") {
+        try {
+          this.queue.queueChanges.volumeChanged(this.guildId, this);
+        } catch {
+        }
+      }
     }
     const finalOptions = Object.fromEntries(Object.entries({
       track: {
@@ -3897,8 +3909,6 @@ var Player = class {
   async setVolume(volume, ignoreVolumeDecrementer = false) {
     volume = Number(volume);
     if (isNaN(volume)) throw new TypeError("Volume must be a number.");
-    const oldVolume = this.volume;
-    const oldStored = typeof this.queue.queueChanges?.volumeChanged === "function" ? this.queue.utils.toJSON() : null;
     this.volume = Math.round(Math.max(Math.min(volume, 1e3), 0));
     this.lavalinkVolume = Math.round(Math.max(Math.min(Math.round(
       this.LavalinkManager.options.playerOptions.volumeDecrementer && !ignoreVolumeDecrementer ? this.volume * this.LavalinkManager.options.playerOptions.volumeDecrementer : this.volume
@@ -3919,7 +3929,7 @@ var Player = class {
     this.ping.lavalink = Math.round((performance.now() - now) / 10) / 100;
     if (typeof this.queue.queueChanges?.volumeChanged === "function") {
       try {
-        this.queue.queueChanges.volumeChanged(this.guildId, oldVolume, this.volume, this, oldStored, this.queue.utils.toJSON());
+        this.queue.queueChanges.volumeChanged(this.guildId, this);
       } catch {
       }
     }

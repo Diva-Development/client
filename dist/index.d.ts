@@ -1037,7 +1037,7 @@ interface QueueChangesWatcher {
     /** Track seeked event (MUST BE UNPARSED!) */
     seeked: (guildId: string, track: Track, oldPosition: number, newPosition: number, player: Player, oldStoredQueue: StoredQueue, newStoredQueue: StoredQueue) => void;
     /** Volume changed event (MUST BE UNPARSED!) */
-    volumeChanged: (guildId: string, oldVolume: number, newVolume: number, player: Player, oldStoredQueue: StoredQueue, newStoredQueue: StoredQueue) => void;
+    volumeChanged: (guildId: string, player: Player) => void;
 }
 
 type DestroyReasonsType = keyof typeof DestroyReasons | string;
