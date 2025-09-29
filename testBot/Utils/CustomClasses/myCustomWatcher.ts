@@ -28,4 +28,15 @@ export class myCustomWatcher implements QueueChangesWatcher {
         const voiceChannel = this.client.channels.cache.get(player.voiceChannelId)?.name || "Unknown Channel";
         console.log(`${guildName}: Volume changed to ${player.volume}% in ${voiceChannel}`);
     }
+    pauseResume(guildId, player) {
+        const guildName = this.client.guilds.cache.get(guildId)?.name || guildId;
+        const voiceChannel = this.client.channels.cache.get(player.voiceChannelId)?.name || "Unknown Channel";
+        const status = player.paused ? "paused" : "resumed";
+        console.log(`${guildName}: Player ${status} in ${voiceChannel}`);
+    }
+    repeatModeChanged(guildId, player) {
+        const guildName = this.client.guilds.cache.get(guildId)?.name || guildId;
+        const voiceChannel = this.client.channels.cache.get(player.voiceChannelId)?.name || "Unknown Channel";
+        console.log(`${guildName}: Repeat mode changed to ${player.repeatMode} in ${voiceChannel}`);
+    }
 }

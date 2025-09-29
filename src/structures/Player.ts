@@ -487,6 +487,14 @@ export class Player {
         this.ping.lavalink = Math.round((performance.now() - now) / 10) / 100;
         // emit the event
         this.LavalinkManager.emit("playerPaused", this, this.queue.current);
+        
+        // emit pause/resume watcher event if available
+        if (typeof (this.queue as any).queueChanges?.pauseResume === "function") {
+            try { 
+                (this.queue as any).queueChanges.pauseResume(this.guildId, this); 
+            } catch { /* */ }
+        }
+        
         return this;
     }
 
@@ -501,6 +509,14 @@ export class Player {
         this.ping.lavalink = Math.round((performance.now() - now) / 10) / 100;
         // emit the event
         this.LavalinkManager.emit("playerResumed", this, this.queue.current);
+        
+        // emit pause/resume watcher event if available
+        if (typeof (this.queue as any).queueChanges?.pauseResume === "function") {
+            try { 
+                (this.queue as any).queueChanges.pauseResume(this.guildId, this); 
+            } catch { /* */ }
+        }
+        
         return this;
     }
 
@@ -546,6 +562,14 @@ export class Player {
     async setRepeatMode(repeatMode: RepeatMode) {
         if (!["off", "track", "queue"].includes(repeatMode)) throw new RangeError("Repeatmode must be either 'off', 'track', or 'queue'");
         this.repeatMode = repeatMode;
+        
+        // emit repeat mode watcher event if available
+        if (typeof (this.queue as any).queueChanges?.repeatModeChanged === "function") {
+            try { 
+                (this.queue as any).queueChanges.repeatModeChanged(this.guildId, this); 
+            } catch { /* */ }
+        }
+        
         return this;
     }
 

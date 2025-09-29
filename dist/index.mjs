@@ -3994,6 +3994,12 @@ var Player = class {
     await this.node.updatePlayer({ guildId: this.guildId, playerOptions: { paused: true } });
     this.ping.lavalink = Math.round((performance.now() - now) / 10) / 100;
     this.LavalinkManager.emit("playerPaused", this, this.queue.current);
+    if (typeof this.queue.queueChanges?.pauseResume === "function") {
+      try {
+        this.queue.queueChanges.pauseResume(this.guildId, this);
+      } catch {
+      }
+    }
     return this;
   }
   /**
@@ -4006,6 +4012,12 @@ var Player = class {
     await this.node.updatePlayer({ guildId: this.guildId, playerOptions: { paused: false } });
     this.ping.lavalink = Math.round((performance.now() - now) / 10) / 100;
     this.LavalinkManager.emit("playerResumed", this, this.queue.current);
+    if (typeof this.queue.queueChanges?.pauseResume === "function") {
+      try {
+        this.queue.queueChanges.pauseResume(this.guildId, this);
+      } catch {
+      }
+    }
     return this;
   }
   /**
@@ -4040,6 +4052,12 @@ var Player = class {
   async setRepeatMode(repeatMode) {
     if (!["off", "track", "queue"].includes(repeatMode)) throw new RangeError("Repeatmode must be either 'off', 'track', or 'queue'");
     this.repeatMode = repeatMode;
+    if (typeof this.queue.queueChanges?.repeatModeChanged === "function") {
+      try {
+        this.queue.queueChanges.repeatModeChanged(this.guildId, this);
+      } catch {
+      }
+    }
     return this;
   }
   /**
@@ -4530,7 +4548,7 @@ var LavalinkManager = class extends EventEmitter2 {
     }
     if (options?.queueOptions?.queueChangesWatcher) {
       const keys = Object.getOwnPropertyNames(Object.getPrototypeOf(options?.queueOptions?.queueChangesWatcher));
-      const requiredKeys = ["tracksAdd", "tracksRemoved", "shuffled", "seeked", "volumeChanged"];
+      const requiredKeys = ["tracksAdd", "tracksRemoved", "shuffled", "seeked", "volumeChanged", "pauseResume", "repeatModeChanged"];
       if (!requiredKeys.every((v) => keys.includes(v)) || !requiredKeys.every((v) => typeof options?.queueOptions?.queueChangesWatcher[v] === "function")) throw new SyntaxError(`The provided ManagerOption.DefaultQueueChangesWatcher, does not have all required functions: ${requiredKeys.join(", ")}`);
     }
     if (typeof options?.queueOptions?.maxPreviousTracks !== "number" || options?.queueOptions?.maxPreviousTracks < 0) options.queueOptions.maxPreviousTracks = 25;

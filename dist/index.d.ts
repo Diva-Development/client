@@ -1038,6 +1038,10 @@ interface QueueChangesWatcher {
     seeked: (guildId: string, track: Track, oldPosition: number, newPosition: number, player: Player, oldStoredQueue: StoredQueue, newStoredQueue: StoredQueue) => void;
     /** Volume changed event (MUST BE UNPARSED!) */
     volumeChanged: (guildId: string, player: Player) => void;
+    /** Pause/Resume event (MUST BE UNPARSED!) */
+    pauseResume: (guildId: string, player: Player) => void;
+    /** Repeat mode changed event (MUST BE UNPARSED!) */
+    repeatModeChanged: (guildId: string, player: Player) => void;
 }
 
 type DestroyReasonsType = keyof typeof DestroyReasons | string;
