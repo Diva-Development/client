@@ -3989,9 +3989,13 @@ var Player = class {
     this.ping.lavalink = Math.round((performance.now() - now) / 10) / 100;
     if (typeof this.queue.queueChanges?.volumeChanged === "function") {
       try {
+        console.log("DEBUG: Calling volumeChanged watcher");
         this.queue.queueChanges.volumeChanged(this.guildId, this);
-      } catch {
+      } catch (error) {
+        console.log("DEBUG: volumeChanged watcher error:", error);
       }
+    } else {
+      console.log("DEBUG: volumeChanged watcher not found or not a function");
     }
     return this;
   }
@@ -4056,9 +4060,13 @@ var Player = class {
     this.LavalinkManager.emit("playerPaused", this, this.queue.current);
     if (typeof this.queue.queueChanges?.pauseResume === "function") {
       try {
+        console.log("DEBUG: Calling pauseResume watcher from pause()");
         this.queue.queueChanges.pauseResume(this.guildId, this);
-      } catch {
+      } catch (error) {
+        console.log("DEBUG: pauseResume watcher error:", error);
       }
+    } else {
+      console.log("DEBUG: pauseResume watcher not found or not a function");
     }
     return this;
   }
@@ -4074,9 +4082,13 @@ var Player = class {
     this.LavalinkManager.emit("playerResumed", this, this.queue.current);
     if (typeof this.queue.queueChanges?.pauseResume === "function") {
       try {
+        console.log("DEBUG: Calling pauseResume watcher from resume()");
         this.queue.queueChanges.pauseResume(this.guildId, this);
-      } catch {
+      } catch (error) {
+        console.log("DEBUG: pauseResume watcher error:", error);
       }
+    } else {
+      console.log("DEBUG: pauseResume watcher not found or not a function");
     }
     return this;
   }
@@ -4114,9 +4126,13 @@ var Player = class {
     this.repeatMode = repeatMode;
     if (typeof this.queue.queueChanges?.repeatModeChanged === "function") {
       try {
+        console.log("DEBUG: Calling repeatModeChanged watcher");
         this.queue.queueChanges.repeatModeChanged(this.guildId, this);
-      } catch {
+      } catch (error) {
+        console.log("DEBUG: repeatModeChanged watcher error:", error);
       }
+    } else {
+      console.log("DEBUG: repeatModeChanged watcher not found or not a function");
     }
     return this;
   }

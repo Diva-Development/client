@@ -418,8 +418,13 @@ export class Player {
         // emit volume watcher event if available
         if (typeof (this.queue as any).queueChanges?.volumeChanged === "function") {
             try { 
+                console.log("DEBUG: Calling volumeChanged watcher");
                 (this.queue as any).queueChanges.volumeChanged(this.guildId, this); 
-            } catch { /* */ }
+            } catch (error) { 
+                console.log("DEBUG: volumeChanged watcher error:", error);
+            }
+        } else {
+            console.log("DEBUG: volumeChanged watcher not found or not a function");
         }
 
         return this;
@@ -491,8 +496,13 @@ export class Player {
         // emit pause/resume watcher event if available
         if (typeof (this.queue as any).queueChanges?.pauseResume === "function") {
             try { 
+                console.log("DEBUG: Calling pauseResume watcher from pause()");
                 (this.queue as any).queueChanges.pauseResume(this.guildId, this); 
-            } catch { /* */ }
+            } catch (error) { 
+                console.log("DEBUG: pauseResume watcher error:", error);
+            }
+        } else {
+            console.log("DEBUG: pauseResume watcher not found or not a function");
         }
         
         return this;
@@ -513,8 +523,13 @@ export class Player {
         // emit pause/resume watcher event if available
         if (typeof (this.queue as any).queueChanges?.pauseResume === "function") {
             try { 
+                console.log("DEBUG: Calling pauseResume watcher from resume()");
                 (this.queue as any).queueChanges.pauseResume(this.guildId, this); 
-            } catch { /* */ }
+            } catch (error) { 
+                console.log("DEBUG: pauseResume watcher error:", error);
+            }
+        } else {
+            console.log("DEBUG: pauseResume watcher not found or not a function");
         }
         
         return this;
@@ -566,8 +581,13 @@ export class Player {
         // emit repeat mode watcher event if available
         if (typeof (this.queue as any).queueChanges?.repeatModeChanged === "function") {
             try { 
+                console.log("DEBUG: Calling repeatModeChanged watcher");
                 (this.queue as any).queueChanges.repeatModeChanged(this.guildId, this); 
-            } catch { /* */ }
+            } catch (error) { 
+                console.log("DEBUG: repeatModeChanged watcher error:", error);
+            }
+        } else {
+            console.log("DEBUG: repeatModeChanged watcher not found or not a function");
         }
         
         return this;
