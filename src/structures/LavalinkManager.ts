@@ -169,9 +169,9 @@ export class LavalinkManager<CustomPlayerT extends Player = Player> extends Even
 
         /* QUEUE WATCHER */
         if (options?.queueOptions?.queueChangesWatcher) {
-            const keys = Object.getOwnPropertyNames(Object.getPrototypeOf(options?.queueOptions?.queueChangesWatcher));
+            const watcher = options.queueOptions.queueChangesWatcher;
             const requiredKeys = ["tracksAdd", "tracksRemoved", "shuffled", "seeked", "volumeChanged", "pauseResume", "repeatModeChanged"];
-            if (!requiredKeys.every(v => keys.includes(v)) || !requiredKeys.every(v => typeof options?.queueOptions?.queueChangesWatcher[v] === "function")) throw new SyntaxError(`The provided ManagerOption.DefaultQueueChangesWatcher, does not have all required functions: ${requiredKeys.join(", ")}`);
+            if (!requiredKeys.every(v => typeof watcher[v] === "function")) throw new SyntaxError(`The provided ManagerOption.DefaultQueueChangesWatcher, does not have all required functions: ${requiredKeys.join(", ")}`);
         }
 
         if (typeof options?.queueOptions?.maxPreviousTracks !== "number" || options?.queueOptions?.maxPreviousTracks < 0) options.queueOptions.maxPreviousTracks = 25;

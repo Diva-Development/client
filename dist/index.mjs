@@ -3929,13 +3929,9 @@ var Player = class {
     this.ping.lavalink = Math.round((performance.now() - now) / 10) / 100;
     if (typeof this.queue.queueChanges?.volumeChanged === "function") {
       try {
-        console.log("DEBUG: Calling volumeChanged watcher");
         this.queue.queueChanges.volumeChanged(this.guildId, this);
-      } catch (error) {
-        console.log("DEBUG: volumeChanged watcher error:", error);
+      } catch {
       }
-    } else {
-      console.log("DEBUG: volumeChanged watcher not found or not a function");
     }
     return this;
   }
@@ -4000,13 +3996,9 @@ var Player = class {
     this.LavalinkManager.emit("playerPaused", this, this.queue.current);
     if (typeof this.queue.queueChanges?.pauseResume === "function") {
       try {
-        console.log("DEBUG: Calling pauseResume watcher from pause()");
         this.queue.queueChanges.pauseResume(this.guildId, this);
-      } catch (error) {
-        console.log("DEBUG: pauseResume watcher error:", error);
+      } catch {
       }
-    } else {
-      console.log("DEBUG: pauseResume watcher not found or not a function");
     }
     return this;
   }
@@ -4022,13 +4014,9 @@ var Player = class {
     this.LavalinkManager.emit("playerResumed", this, this.queue.current);
     if (typeof this.queue.queueChanges?.pauseResume === "function") {
       try {
-        console.log("DEBUG: Calling pauseResume watcher from resume()");
         this.queue.queueChanges.pauseResume(this.guildId, this);
-      } catch (error) {
-        console.log("DEBUG: pauseResume watcher error:", error);
+      } catch {
       }
-    } else {
-      console.log("DEBUG: pauseResume watcher not found or not a function");
     }
     return this;
   }
@@ -4066,13 +4054,9 @@ var Player = class {
     this.repeatMode = repeatMode;
     if (typeof this.queue.queueChanges?.repeatModeChanged === "function") {
       try {
-        console.log("DEBUG: Calling repeatModeChanged watcher");
         this.queue.queueChanges.repeatModeChanged(this.guildId, this);
-      } catch (error) {
-        console.log("DEBUG: repeatModeChanged watcher error:", error);
+      } catch {
       }
-    } else {
-      console.log("DEBUG: repeatModeChanged watcher not found or not a function");
     }
     return this;
   }
@@ -4563,9 +4547,9 @@ var LavalinkManager = class extends EventEmitter2 {
       if (!requiredKeys.every((v) => keys.includes(v)) || !requiredKeys.every((v) => typeof options?.queueOptions?.queueStore[v] === "function")) throw new SyntaxError(`The provided ManagerOption.QueueStore, does not have all required functions: ${requiredKeys.join(", ")}`);
     }
     if (options?.queueOptions?.queueChangesWatcher) {
-      const keys = Object.getOwnPropertyNames(Object.getPrototypeOf(options?.queueOptions?.queueChangesWatcher));
+      const watcher = options.queueOptions.queueChangesWatcher;
       const requiredKeys = ["tracksAdd", "tracksRemoved", "shuffled", "seeked", "volumeChanged", "pauseResume", "repeatModeChanged"];
-      if (!requiredKeys.every((v) => keys.includes(v)) || !requiredKeys.every((v) => typeof options?.queueOptions?.queueChangesWatcher[v] === "function")) throw new SyntaxError(`The provided ManagerOption.DefaultQueueChangesWatcher, does not have all required functions: ${requiredKeys.join(", ")}`);
+      if (!requiredKeys.every((v) => typeof watcher[v] === "function")) throw new SyntaxError(`The provided ManagerOption.DefaultQueueChangesWatcher, does not have all required functions: ${requiredKeys.join(", ")}`);
     }
     if (typeof options?.queueOptions?.maxPreviousTracks !== "number" || options?.queueOptions?.maxPreviousTracks < 0) options.queueOptions.maxPreviousTracks = 25;
   }
