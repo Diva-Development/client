@@ -95,7 +95,7 @@ export class LavalinkNode {
             secure: false,
             retryAmount: 5,
             retryDelay: 10e3,
-            requestSignalTimeoutMS: 10000,
+            requestSignalTimeoutMS: 30000,
             heartBeatInterval: 30_000,
             closeOnError: true,
             enablePingOnStatsCheck: true,
