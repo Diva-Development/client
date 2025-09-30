@@ -988,7 +988,7 @@ var LavalinkNode = class {
       secure: false,
       retryAmount: 5,
       retryDelay: 1e4,
-      requestSignalTimeoutMS: 1e4,
+      requestSignalTimeoutMS: 3e4,
       heartBeatInterval: 3e4,
       closeOnError: true,
       enablePingOnStatsCheck: true,
