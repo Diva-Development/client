@@ -2083,6 +2083,7 @@ var LavalinkNode = class {
   async trackEnd(player, track, payload) {
     if (player.get("internal_nodeChanging") === true) return;
     const trackToUse = track || this.getTrackOfPayload(payload);
+    this.NodeManager.LavalinkManager.emit("deleteMessage", player, player.get("message") || null);
     if (payload.reason === "replaced") {
       if (this.NodeManager.LavalinkManager.options?.advancedOptions?.enableDebugEvents) {
         this.NodeManager.LavalinkManager.emit("debug", "TrackEndReplaced" /* TrackEndReplaced */, {
@@ -2273,6 +2274,7 @@ var LavalinkNode = class {
   /** private util function for handling the queue end event */
   async queueEnd(player, track, payload) {
     if (player.get("internal_nodeChanging") === true) return;
+    this.NodeManager.LavalinkManager.emit("deleteMessage", player, player.get("message") || null);
     player.queue.current = null;
     player.playing = false;
     player.set("internal_stopPlaying", void 0);

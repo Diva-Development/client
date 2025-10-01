@@ -189,6 +189,13 @@ export interface LavalinkManagerEvents<CustomPlayerT extends Player = Player> {
      */
     "LyricsNotFound": (player: CustomPlayerT, track: Track | UnresolvedTrack | null, payload: LyricsNotFoundEvent) => void;
 
+    /**
+     * Emitted when a track ends - always emitted regardless of reason
+     * Contains the message stored in player.get("message") or null if not set
+     * @event Manager#deleteMessage
+     */
+    "deleteMessage": (player: CustomPlayerT, message: unknown) => void;
+
     "playerResumed": (player: CustomPlayerT, track: Track | UnresolvedTrack | null) => void;
 
     "playerPaused": (player: CustomPlayerT, track: Track | UnresolvedTrack | null) => void;
