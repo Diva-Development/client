@@ -1264,8 +1264,6 @@ var LavalinkNode = class {
           functionLayer: "LavalinkNode > nodeEvent > stats > heartBeat() > timeoutHit"
         });
       }
-      this.isAlive = false;
-      this.socket.terminate();
     }, 65e3);
   }
   /**

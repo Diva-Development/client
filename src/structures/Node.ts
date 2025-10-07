@@ -445,8 +445,6 @@ export class LavalinkNode {
                     functionLayer: "LavalinkNode > nodeEvent > stats > heartBeat() > timeoutHit",
                 });
             }
-            this.isAlive = false;
-            this.socket.terminate();
         }, 65_000); // the stats endpoint get's sent every 60s. se wee add a 5s buffer to make sure we don't miss any stats message
     }
     /**
