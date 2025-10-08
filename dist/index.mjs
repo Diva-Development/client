@@ -991,7 +991,7 @@ var LavalinkNode = class {
       requestSignalTimeoutMS: 3e4,
       heartBeatInterval: 3e4,
       closeOnError: true,
-      enablePingOnStatsCheck: true,
+      enablePingOnStatsCheck: false,
       ...options
     };
     this.NodeManager = manager;

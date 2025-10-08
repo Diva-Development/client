@@ -98,7 +98,7 @@ export class LavalinkNode {
             requestSignalTimeoutMS: 30000,
             heartBeatInterval: 30_000,
             closeOnError: true,
-            enablePingOnStatsCheck: true,
+            enablePingOnStatsCheck: false,
             ...options
         };
 
