@@ -499,7 +499,13 @@ export async function queueTrackEnd(player: Player, dontShiftQueue: boolean = fa
     }
 
     // and if repeatMode == queue, add it back to the queue!
-    if (player.repeatMode === "queue" && player.queue.current) player.queue.tracks.push(player.queue.current)
+    if (player.repeatMode === "queue" && player.queue.current) {
+        // Only add back if the track has valid duration (more than 20 seconds)
+        const duration = player.queue.current.info?.duration;
+        if (duration && !isNaN(duration) && duration >= 20000) {
+            player.queue.tracks.push(player.queue.current);
+        }
+    }
     // change the current Track to the next upcoming one
     const nextSong = dontShiftQueue ? null : player.queue.tracks.shift() as Track;
 

@@ -902,7 +902,12 @@ async function queueTrackEnd(player, dontShiftQueue = false) {
     if (player.queue.previous.length > player.queue.options.maxPreviousTracks) player.queue.previous.splice(player.queue.options.maxPreviousTracks, player.queue.previous.length);
     await player.queue.utils.save();
   }
-  if (player.repeatMode === "queue" && player.queue.current) player.queue.tracks.push(player.queue.current);
+  if (player.repeatMode === "queue" && player.queue.current) {
+    const duration = player.queue.current.info?.duration;
+    if (duration && !isNaN(duration) && duration >= 2e4) {
+      player.queue.tracks.push(player.queue.current);
+    }
+  }
   const nextSong = dontShiftQueue ? null : player.queue.tracks.shift();
   try {
     if (nextSong && player.LavalinkManager.utils.isUnresolvedTrack(nextSong)) await nextSong.resolve(player);
@@ -3427,6 +3432,20 @@ var Queue = class {
   managerUtils = new ManagerUtils();
   queueChanges;
   /**
+   * Check if a track is valid (has proper duration and is not too short)
+   * @param track The track to validate
+   * @returns true if the track is valid, false otherwise
+   */
+  isValid(track) {
+    if (this.managerUtils.isTrack(track)) {
+      const duration = track.info?.duration;
+      if (!duration || isNaN(duration) || duration < 2e4) {
+        return false;
+      }
+    }
+    return true;
+  }
+  /**
    * Create a new Queue
    * @param guildId The guild ID
    * @param data The data to initialize the queue with
@@ -3515,13 +3534,14 @@ var Queue = class {
    * @returns {number} Queue-Size (for the next Tracks)
    */
   async add(TrackOrTracks, index) {
+    const validTracks = (Array.isArray(TrackOrTracks) ? TrackOrTracks : [TrackOrTracks]).flat(2).filter((v) => this.managerUtils.isTrack(v) || this.managerUtils.isUnresolvedTrack(v)).filter((v) => this.isValid(v));
     if (typeof index === "number" && index >= 0 && index < this.tracks.length) {
-      return await this.splice(index, 0, (Array.isArray(TrackOrTracks) ? TrackOrTracks : [TrackOrTracks]).flat(2).filter((v) => this.managerUtils.isTrack(v) || this.managerUtils.isUnresolvedTrack(v)));
+      return await this.splice(index, 0, validTracks);
     }
     const oldStored = typeof this.queueChanges?.tracksAdd === "function" ? this.utils.toJSON() : null;
-    this.tracks.push(...(Array.isArray(TrackOrTracks) ? TrackOrTracks : [TrackOrTracks]).flat(2).filter((v) => this.managerUtils.isTrack(v) || this.managerUtils.isUnresolvedTrack(v)));
+    this.tracks.push(...validTracks);
     if (typeof this.queueChanges?.tracksAdd === "function") try {
-      this.queueChanges.tracksAdd(this.guildId, (Array.isArray(TrackOrTracks) ? TrackOrTracks : [TrackOrTracks]).flat(2).filter((v) => this.managerUtils.isTrack(v) || this.managerUtils.isUnresolvedTrack(v)), this.tracks.length, oldStored, this.utils.toJSON());
+      this.queueChanges.tracksAdd(this.guildId, validTracks, this.tracks.length, oldStored, this.utils.toJSON());
     } catch {
     }
     await this.utils.save();
@@ -3540,11 +3560,12 @@ var Queue = class {
       if (TrackOrTracks) return await this.add(TrackOrTracks);
       return null;
     }
+    const validTracks = TrackOrTracks ? (Array.isArray(TrackOrTracks) ? TrackOrTracks : [TrackOrTracks]).flat(2).filter((v) => this.managerUtils.isTrack(v) || this.managerUtils.isUnresolvedTrack(v)).filter((v) => this.isValid(v)) : [];
     if (TrackOrTracks && typeof this.queueChanges?.tracksAdd === "function") try {
-      this.queueChanges.tracksAdd(this.guildId, (Array.isArray(TrackOrTracks) ? TrackOrTracks : [TrackOrTracks]).flat(2).filter((v) => this.managerUtils.isTrack(v) || this.managerUtils.isUnresolvedTrack(v)), index, oldStored, this.utils.toJSON());
+      this.queueChanges.tracksAdd(this.guildId, validTracks, index, oldStored, this.utils.toJSON());
     } catch {
     }
-    let spliced = TrackOrTracks ? this.tracks.splice(index, amount, ...(Array.isArray(TrackOrTracks) ? TrackOrTracks : [TrackOrTracks]).flat(2).filter((v) => this.managerUtils.isTrack(v) || this.managerUtils.isUnresolvedTrack(v))) : this.tracks.splice(index, amount);
+    let spliced = TrackOrTracks ? this.tracks.splice(index, amount, ...validTracks) : this.tracks.splice(index, amount);
     spliced = Array.isArray(spliced) ? spliced : [spliced];
     if (typeof this.queueChanges?.tracksRemoved === "function") try {
       this.queueChanges.tracksRemoved(this.guildId, spliced, index, oldStored, this.utils.toJSON());

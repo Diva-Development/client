@@ -666,6 +666,12 @@ declare class Queue {
     private managerUtils;
     private queueChanges;
     /**
+     * Check if a track is valid (has proper duration and is not too short)
+     * @param track The track to validate
+     * @returns true if the track is valid, false otherwise
+     */
+    private isValid;
+    /**
      * Create a new Queue
      * @param guildId The guild ID
      * @param data The data to initialize the queue with

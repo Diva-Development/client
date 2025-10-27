@@ -141,6 +141,24 @@ export class Queue {
     private queueChanges: QueueChangesWatcher | null;
 
     /**
+     * Check if a track is valid (has proper duration and is not too short)
+     * @param track The track to validate
+     * @returns true if the track is valid, false otherwise
+     */
+    private isValid(track: Track | UnresolvedTrack): boolean {
+        // For resolved tracks, check duration - skip tracks less than 20 seconds
+        if (this.managerUtils.isTrack(track)) {
+            const duration = track.info?.duration;
+            // Skip tracks with invalid duration (NaN, null, undefined) or duration less than 20 seconds
+            if (!duration || isNaN(duration) || duration < 20000) {
+                return false;
+            }
+        }
+        
+        return true;
+    }
+
+    /**
      * Create a new Queue
      * @param guildId The guild ID
      * @param data The data to initialize the queue with
@@ -247,15 +265,21 @@ export class Queue {
      * @returns {number} Queue-Size (for the next Tracks)
      */
     public async add(TrackOrTracks: Track | UnresolvedTrack | (Track | UnresolvedTrack)[], index?: number) {
+        // Filter out invalid tracks using the isValid function
+        const validTracks = (Array.isArray(TrackOrTracks) ? TrackOrTracks : [TrackOrTracks])
+            .flat(2)
+            .filter(v => this.managerUtils.isTrack(v) || this.managerUtils.isUnresolvedTrack(v))
+            .filter(v => this.isValid(v));
+
         if (typeof index === "number" && index >= 0 && index < this.tracks.length) {
-            return await this.splice(index, 0, (Array.isArray(TrackOrTracks) ? TrackOrTracks : [TrackOrTracks]).flat(2).filter(v => this.managerUtils.isTrack(v) || this.managerUtils.isUnresolvedTrack(v)));
+            return await this.splice(index, 0, validTracks);
         }
 
         const oldStored = typeof this.queueChanges?.tracksAdd === "function" ? this.utils.toJSON() : null;
-        // add the track(s)
-        this.tracks.push(...(Array.isArray(TrackOrTracks) ? TrackOrTracks : [TrackOrTracks]).flat(2).filter(v => this.managerUtils.isTrack(v) || this.managerUtils.isUnresolvedTrack(v)));
+        // add the valid track(s)
+        this.tracks.push(...validTracks);
         // log if available
-        if (typeof this.queueChanges?.tracksAdd === "function") try { this.queueChanges.tracksAdd(this.guildId, (Array.isArray(TrackOrTracks) ? TrackOrTracks : [TrackOrTracks]).flat(2).filter(v => this.managerUtils.isTrack(v) || this.managerUtils.isUnresolvedTrack(v)), this.tracks.length, oldStored, this.utils.toJSON()); } catch { /*  */ }
+        if (typeof this.queueChanges?.tracksAdd === "function") try { this.queueChanges.tracksAdd(this.guildId, validTracks, this.tracks.length, oldStored, this.utils.toJSON()); } catch { /*  */ }
 
         // save the queue
         await this.utils.save();
@@ -277,10 +301,17 @@ export class Queue {
             if (TrackOrTracks) return await this.add(TrackOrTracks);
             return null
         }
+
+        // Filter out invalid tracks using the isValid function if adding tracks
+        const validTracks = TrackOrTracks ? (Array.isArray(TrackOrTracks) ? TrackOrTracks : [TrackOrTracks])
+            .flat(2)
+            .filter(v => this.managerUtils.isTrack(v) || this.managerUtils.isUnresolvedTrack(v))
+            .filter(v => this.isValid(v)) : [];
+
         // Log if available
-        if ((TrackOrTracks) && typeof this.queueChanges?.tracksAdd === "function") try { this.queueChanges.tracksAdd(this.guildId, (Array.isArray(TrackOrTracks) ? TrackOrTracks : [TrackOrTracks]).flat(2).filter(v => this.managerUtils.isTrack(v) || this.managerUtils.isUnresolvedTrack(v)), index, oldStored, this.utils.toJSON()); } catch { /*  */ }
+        if ((TrackOrTracks) && typeof this.queueChanges?.tracksAdd === "function") try { this.queueChanges.tracksAdd(this.guildId, validTracks, index, oldStored, this.utils.toJSON()); } catch { /*  */ }
         // remove the tracks (and add the new ones)
-        let spliced = TrackOrTracks ? this.tracks.splice(index, amount, ...(Array.isArray(TrackOrTracks) ? TrackOrTracks : [TrackOrTracks]).flat(2).filter(v => this.managerUtils.isTrack(v) || this.managerUtils.isUnresolvedTrack(v))) : this.tracks.splice(index, amount);
+        let spliced = TrackOrTracks ? this.tracks.splice(index, amount, ...validTracks) : this.tracks.splice(index, amount);
         // get the spliced array
         spliced = (Array.isArray(spliced) ? spliced : [spliced]);
         // Log if available
