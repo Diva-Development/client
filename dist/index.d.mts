@@ -281,9 +281,6 @@ declare const EQList: {
     Gaming: EQBand[];
 };
 
-/**
- * The FilterManager for each player
- */
 declare class FilterManager {
     /** The Equalizer bands currently applied to the Lavalink Server */
     equalizerBands: EQBand[];
