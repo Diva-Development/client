@@ -148,6 +148,11 @@ export class Queue {
     private isValid(track: Track | UnresolvedTrack): boolean {
         // For resolved tracks, check duration - skip tracks less than 20 seconds
         if (this.managerUtils.isTrack(track)) {
+            // If it's a stream, it's always valid regardless of duration
+            if (track.info?.isStream === true) {
+                return true;
+            }
+            
             const duration = track.info?.duration;
             // Skip tracks with invalid duration (NaN, null, undefined) or duration less than 20 seconds
             if (!duration || isNaN(duration) || duration < 20000) {
