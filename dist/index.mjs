@@ -3520,9 +3520,6 @@ var Queue = class {
    */
   isValid(track) {
     if (this.managerUtils.isTrack(track)) {
-      if (track.info?.isStream === true) {
-        return true;
-      }
       const duration = track.info?.duration;
       if (!duration || isNaN(duration) || duration < 2e4) {
         return false;
