@@ -904,7 +904,7 @@ async function queueTrackEnd(player, dontShiftQueue = false) {
   }
   if (player.repeatMode === "queue" && player.queue.current) {
     const duration = player.queue.current.info?.duration;
-    if (duration && !isNaN(duration) && duration >= 2e4) {
+    if (duration && !isNaN(duration) && duration >= 1e4) {
       player.queue.tracks.push(player.queue.current);
     }
   }
@@ -1167,7 +1167,13 @@ var LavalinkNode = class {
         selectedTrack: typeof res.data?.info?.selectedTrack !== "number" || res.data?.info?.selectedTrack === -1 ? null : resTracks[res.data?.info?.selectedTrack] ? this.NodeManager.LavalinkManager.utils.buildTrack(resTracks[res.data?.info?.selectedTrack], requestUser) : null,
         duration: resTracks.length ? resTracks.reduce((acc, cur) => acc + (cur?.info?.duration || cur?.info?.length || 0), 0) : 0
       } : null,
-      tracks: resTracks.length ? resTracks.map((t) => this.NodeManager.LavalinkManager.utils.buildTrack(t, requestUser)) : []
+      tracks: resTracks.length ? resTracks.map((t) => this.NodeManager.LavalinkManager.utils.buildTrack(t, requestUser)).filter((track) => {
+        const duration = track?.info?.duration;
+        if (!duration || isNaN(duration) || duration < 1e4) {
+          return false;
+        }
+        return true;
+      }) : []
     };
   }
   /**
@@ -3581,7 +3587,7 @@ var Queue = class {
   isValid(track) {
     if (this.managerUtils.isTrack(track)) {
       const duration = track.info?.duration;
-      if (!duration || isNaN(duration) || duration < 2e4) {
+      if (!duration || isNaN(duration) || duration < 1e4) {
         return false;
       }
     }

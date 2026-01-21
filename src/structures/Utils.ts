@@ -500,9 +500,9 @@ export async function queueTrackEnd(player: Player, dontShiftQueue: boolean = fa
 
     // and if repeatMode == queue, add it back to the queue!
     if (player.repeatMode === "queue" && player.queue.current) {
-        // Only add back if the track has valid duration (more than 20 seconds)
+        // Only add back if the track has valid duration (more than 10 seconds)
         const duration = player.queue.current.info?.duration;
-        if (duration && !isNaN(duration) && duration >= 20000) {
+        if (duration && !isNaN(duration) && duration >= 10000) {
             player.queue.tracks.push(player.queue.current);
         }
     }

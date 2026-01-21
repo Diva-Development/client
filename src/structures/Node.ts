@@ -258,7 +258,13 @@ export class LavalinkNode {
                 duration: resTracks.length ? resTracks.reduce((acc: number, cur: Track & { info: Track["info"] & { length?: number } }) => acc + (cur?.info?.duration || cur?.info?.length || 0), 0) : 0,
 
             } : null,
-            tracks: (resTracks.length ? resTracks.map(t => this.NodeManager.LavalinkManager.utils.buildTrack(t, requestUser)) : []) as Track[]
+            tracks: (resTracks.length ? resTracks.map(t => this.NodeManager.LavalinkManager.utils.buildTrack(t, requestUser)).filter(track => {
+                const duration = track?.info?.duration;
+                if (!duration || isNaN(duration) || duration < 10000) {
+                    return false;
+                }
+                return true;
+            }) : []) as Track[]
         };
     }
 
