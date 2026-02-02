@@ -1437,7 +1437,7 @@ interface LavalinkNodeOptions {
     /** Close on error */
     closeOnError?: boolean;
     /** Heartbeat interval , set to <= 0 to disable heartbeat system */
-    heartBeatInterval?: 30000;
+    heartBeatInterval?: number;
     /** Recommended, to check wether the client is still connected or not on the stats endpoint */
     enablePingOnStatsCheck?: boolean;
 }
