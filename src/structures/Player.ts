@@ -215,7 +215,7 @@ export class Player {
                     if (options && "track" in options) delete options.track;
 
                     // try to play the next track if possible
-                    if (this.LavalinkManager.options?.autoSkipOnResolveError === true && this.queue.tracks[0]) return this.play(options);
+                    if (this.LavalinkManager.options?.autoSkipOnResolveError === true && (await this.queue.getTrackCount()) > 0) return this.play(options);
 
                     return this;
                 }
@@ -285,7 +285,7 @@ export class Player {
             });
         }
 
-        if (!this.queue.current && this.queue.tracks.length) await queueTrackEnd(this);
+        if (!this.queue.current && (await this.queue.getTrackCount()) > 0) await queueTrackEnd(this);
 
         if (this.queue.current && this.LavalinkManager.utils.isUnresolvedTrack(this.queue.current)) {
             if (this.LavalinkManager.options?.advancedOptions?.enableDebugEvents) {
@@ -325,7 +325,7 @@ export class Player {
                 await queueTrackEnd(this, true);
 
                 // try to play the next track if possible
-                if (this.LavalinkManager.options?.autoSkipOnResolveError === true && this.queue.tracks[0]) return this.play(options);
+                if (this.LavalinkManager.options?.autoSkipOnResolveError === true && (await this.queue.getTrackCount()) > 0) return this.play(options);
 
                 return this;
             }
@@ -536,7 +536,7 @@ export class Player {
         if (position < 0 || position > this.queue.current.info.duration) position = Math.max(Math.min(position, this.queue.current.info.duration), 0);
 
         const oldPosition = this.lastPosition;
-        const oldStored = typeof (this.queue as any).queueChanges?.seeked === "function" ? (this.queue as any).utils.toJSON() : null;
+        const oldStored = typeof (this.queue as any).queueChanges?.seeked === "function" ? await (this.queue as any).utils.toJSON() : null;
 
         this.lastPositionChange = Date.now();
         this.lastPosition = position;
@@ -548,7 +548,7 @@ export class Player {
         // emit seek watcher event if available
         if (typeof (this.queue as any).queueChanges?.seeked === "function") {
             try { 
-                (this.queue as any).queueChanges.seeked(this.guildId, this.queue.current, oldPosition, position, this, oldStored, (this.queue as any).utils.toJSON()); 
+                (this.queue as any).queueChanges.seeked(this.guildId, this.queue.current, oldPosition, position, this, oldStored, await (this.queue as any).utils.toJSON());
             } catch { /* */ }
         }
 
@@ -578,10 +578,11 @@ export class Player {
      * @param amount provide the index of the next track to skip to
      */
     async skip(skipTo: number = 0, throwError: boolean = true) {
-        if (!this.queue.tracks.length && (throwError || (typeof skipTo === "boolean" && skipTo === true))) throw new RangeError("Can't skip more than the queue size");
+        const trackCount = await this.queue.getTrackCount();
+        if (!trackCount && (throwError || (typeof skipTo === "boolean" && skipTo === true))) throw new RangeError("Can't skip more than the queue size");
 
         if (typeof skipTo === "number" && skipTo > 1) {
-            if (skipTo > this.queue.tracks.length) throw new RangeError("Can't skip more than the queue size");
+            if (skipTo > trackCount) throw new RangeError("Can't skip more than the queue size");
             await this.queue.splice(0, skipTo - 1);
         }
 
@@ -606,7 +607,7 @@ export class Player {
         this.set("internal_stopPlaying", true);
 
         // remove tracks from the queue
-        if (this.queue.tracks.length && clearQueue === true) await this.queue.splice(0, this.queue.tracks.length);
+        if (clearQueue === true) await this.queue.clearTracks();
 
         if (executeAutoplay === false) this.set("internal_autoplayStopPlaying", true);
         else this.set("internal_autoplayStopPlaying", undefined);
@@ -841,8 +842,9 @@ export class Player {
                 } catch { return false }
             };
             if (!isDefaultSource()) throw new RangeError(`defaultSearchPlatform "${this.LavalinkManager.options.playerOptions.defaultSearchPlatform}" is not supported by the newNode`);
-            if (this.queue.current || this.queue.tracks.length) { // Check if all queued track sources are supported by the new node
-                const trackSources = new Set([this.queue.current, ...this.queue.tracks].map(track => track.info.sourceName));
+            const queueTracks = await this.queue.getTracks();
+            if (this.queue.current || queueTracks.length) { // Check if all queued track sources are supported by the new node
+                const trackSources = new Set([this.queue.current, ...queueTracks].map(track => track.info.sourceName));
                 const missingSources = [...trackSources].filter(
                     source => !updateNode.info.sourceManagers.includes(source));
                 if (missingSources.length)
@@ -858,7 +860,7 @@ export class Player {
             });
         }
 
-        const data = this.toJSON();
+        const data = await this.toJSON();
         const currentTrack = this.queue.current;
         if (!this.voice.endpoint ||
             !this.voice.sessionId ||
@@ -955,7 +957,7 @@ export class Player {
     }
 
     /** Converts the Player including Queue to a Json state */
-    public toJSON() {
+    public async toJSON() {
         return {
             guildId: this.guildId,
             options: this.options,
@@ -975,7 +977,7 @@ export class Player {
             nodeId: this.node?.id,
             nodeSessionId: this.node?.sessionId,
             ping: this.ping,
-            queue: this.queue.utils.toJSON(),
+            queue: await this.queue.utils.toJSON(),
         } as PlayerJson
     }
 }

@@ -900,8 +900,6 @@ declare class DefaultQueueStore implements QueueStoreManager {
     parse(value: StoredQueue | string): Partial<StoredQueue>;
 }
 declare class Queue {
-    readonly tracks: (Track | UnresolvedTrack)[];
-    readonly previous: Track[];
     current: Track | null;
     options: {
         maxPreviousTracks: number;
@@ -924,6 +922,46 @@ declare class Queue {
      * @param queueOptions
      */
     constructor(guildId: string, data?: Partial<StoredQueue>, QueueSaver?: QueueSaver, queueOptions?: ManagerQueueOptions);
+    /** Load the full queue state from Redis, with current from memory */
+    private _load;
+    /** Save the full queue state to Redis, enforcing maxPreviousTracks */
+    private _save;
+    /** Create a shallow copy of a StoredQueue for change watcher snapshots */
+    private _snapshot;
+    /** Get all tracks from Redis */
+    getTracks(): Promise<(Track | UnresolvedTrack)[]>;
+    /** Get the number of tracks in the queue */
+    getTrackCount(): Promise<number>;
+    /** Get a track at a specific index */
+    getTrack(index: number): Promise<Track | UnresolvedTrack | undefined>;
+    /** Get a slice of tracks */
+    getTracksSlice(start: number, end?: number): Promise<(Track | UnresolvedTrack)[]>;
+    /** Get all previous tracks from Redis */
+    getPrevious(): Promise<Track[]>;
+    /** Get a previous track at a specific index */
+    getPreviousTrack(index: number): Promise<Track | undefined>;
+    /** Get the number of previous tracks */
+    getPreviousCount(): Promise<number>;
+    /** Clear all tracks from the queue */
+    clearTracks(): Promise<void>;
+    /** Add a track to the beginning of the queue */
+    unshiftTrack(track: Track | UnresolvedTrack): Promise<number>;
+    /** Remove and return the first track from the queue */
+    shiftTrack(): Promise<Track | UnresolvedTrack | undefined>;
+    /** Add a track to the end of the queue */
+    pushTrack(track: Track | UnresolvedTrack): Promise<number>;
+    /** Replace all tracks in the queue */
+    setTracks(tracks: (Track | UnresolvedTrack)[]): Promise<void>;
+    /** Move a track from one position to another */
+    moveTrack(from: number, to: number): Promise<void>;
+    /** Find the index of a track matching a predicate */
+    findTrackIndex(predicate: (track: Track | UnresolvedTrack) => boolean): Promise<number>;
+    /** Add a track to the beginning of the previous tracks array */
+    addToPrevious(track: Track): Promise<void>;
+    /** Replace a track at a specific index */
+    replaceTrack(index: number, track: Track | UnresolvedTrack): Promise<boolean>;
+    /** Swap two tracks in the queue */
+    swapTracks(i: number, j: number): Promise<boolean>;
     /**
      * Utils for a Queue
      */
@@ -931,7 +969,7 @@ declare class Queue {
         /**
          * Save the current cached Queue on the database/server (overides the server)
          */
-        save: () => Promise<boolean | void>;
+        save: () => Promise<void>;
         /**
          * Sync the current queue database/server with the cached one
          * @returns {void}
@@ -939,14 +977,16 @@ declare class Queue {
         sync: (override?: boolean, dontSyncCurrent?: boolean) => Promise<void>;
         destroy: () => Promise<boolean | void>;
         /**
-         * @returns {{current:Track|null, previous:Track[], tracks:Track[]}}The Queue, but in a raw State, which allows easier handling for the QueueStoreManager
+         * @returns The Queue, but in a raw State, which allows easier handling for the QueueStoreManager
+         * NOTE: This is now async since tracks/previous are loaded from Redis
          */
-        toJSON: () => StoredQueue;
+        toJSON: () => Promise<StoredQueue>;
         /**
          * Get the Total Duration of the Queue-Songs summed up
-         * @returns {number}
+         * NOTE: This is now async since tracks are loaded from Redis
+         * @returns {Promise<number>}
          */
-        totalDuration: () => number;
+        totalDuration: () => Promise<number>;
     };
     /**
      * Shuffles the current Queue, then saves it
@@ -959,7 +999,7 @@ declare class Queue {
      * @param {number} index At what position to add the Track
      * @returns {number} Queue-Size (for the next Tracks)
      */
-    add(TrackOrTracks: Track | UnresolvedTrack | (Track | UnresolvedTrack)[], index?: number): any;
+    add(TrackOrTracks: Track | UnresolvedTrack | (Track | UnresolvedTrack)[], index?: number): Promise<number>;
     /**
      * Splice the tracks in the Queue
      * @param {number} index Where to remove the Track
@@ -967,7 +1007,7 @@ declare class Queue {
      * @param {Track | Track[]} TrackOrTracks Want to Add more Tracks?
      * @returns {Track} Spliced Track
      */
-    splice(index: number, amount: number, TrackOrTracks?: Track | UnresolvedTrack | (Track | UnresolvedTrack)[]): any;
+    splice(index: number, amount: number, TrackOrTracks?: Track | UnresolvedTrack | (Track | UnresolvedTrack)[]): Promise<number | UnresolvedTrack | Track | (UnresolvedTrack | Track)[]>;
     /**
      * Remove stuff from the queue.tracks array
      *  - single Track | UnresolvedTrack
@@ -980,7 +1020,7 @@ declare class Queue {
      * ```js
      * // remove single track
      *
-     * const track = player.queue.tracks[4];
+     * const track = await player.queue.getTrack(4);
      * await player.queue.remove(track);
      *
      * // if you already have the index you can straight up pass it too
@@ -988,7 +1028,8 @@ declare class Queue {
      *
      *
      * // if you want to remove multiple tracks, e.g. from position 4 to position 10 you can do smt like this
-     * await player.queue.remove(player.queue.tracks.slice(4, 10)) // get's the tracks from 4 - 10, which then get's found in the remove function to be removed
+     * const tracks = await player.queue.getTracksSlice(4, 10);
+     * await player.queue.remove(tracks);
      *
      * // I still highly suggest to use .splice!
      *
@@ -1250,7 +1291,7 @@ declare class Player {
      */
     moveNode(node?: string): Promise<string | this>;
     /** Converts the Player including Queue to a Json state */
-    toJSON(): PlayerJson;
+    toJSON(): Promise<PlayerJson>;
 }
 
 interface StoredQueue {

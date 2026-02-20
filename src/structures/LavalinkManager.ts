@@ -622,7 +622,7 @@ export class LavalinkManager<CustomPlayerT extends Player = Player> extends Even
                         }
 
                         // connect if there are tracks & autoReconnectOnlyWithTracks = true or autoReconnectOnlyWithTracks is false
-                        if (!autoReconnectOnlyWithTracks || (autoReconnectOnlyWithTracks && (player.queue.current || player.queue.tracks.length))) {
+                        if (!autoReconnectOnlyWithTracks || (autoReconnectOnlyWithTracks && (player.queue.current || (await player.queue.getTrackCount())))) {
                             await player.connect();
                         }
                         // replay the current playing stream
@@ -630,7 +630,7 @@ export class LavalinkManager<CustomPlayerT extends Player = Player> extends Even
                             return void await player.play({ position: previousPosition, paused: previousPaused, clientTrack: player.queue.current, });
                         }
                         // try to play the next track
-                        if (player.queue.tracks.length) {
+                        if (await player.queue.getTrackCount()) {
                             return void await player.play({ paused: previousPaused });
                         }
                         // debug log if nothing was possible

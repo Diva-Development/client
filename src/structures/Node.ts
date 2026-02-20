@@ -1185,7 +1185,7 @@ export class LavalinkNode {
                     return;
                 }
 
-                const oldPlayer = player?.toJSON();
+                const oldPlayer = await player?.toJSON();
 
                 player.lastPositionChange = Date.now();
                 player.lastPosition = payload.state.position || 0;
@@ -1277,7 +1277,8 @@ export class LavalinkNode {
             player.paused = false;
         }
         // don't emit the event if previous track == new track aka track loop
-        if (this.NodeManager.LavalinkManager.options?.emitNewSongsOnly === true && player.queue.previous[0]?.info?.identifier === track?.info?.identifier) {
+        const previousTrack0 = await player.queue.getPreviousTrack(0);
+        if (this.NodeManager.LavalinkManager.options?.emitNewSongsOnly === true && previousTrack0?.info?.identifier === track?.info?.identifier) {
             if (this.NodeManager.LavalinkManager.options?.advancedOptions?.enableDebugEvents) {
                 this.NodeManager.LavalinkManager.emit("debug", DebugEvents.TrackStartNewSongsOnly, {
                     state: "log",
@@ -1327,7 +1328,7 @@ export class LavalinkNode {
             return;
         }
         // If there are no songs in the queue
-        if (!player.queue.tracks.length && (player.repeatMode === "off" || player.get("internal_stopPlaying"))) return this.queueEnd(player, track, payload);
+        if (!(await player.queue.getTrackCount()) && (player.repeatMode === "off" || player.get("internal_stopPlaying"))) return this.queueEnd(player, track, payload);
         // If a track had an error while starting
         if (["loadFailed", "cleanup"].includes(payload.reason)) {
             //Dont add tracks if the player is already destroying.
@@ -1346,8 +1347,7 @@ export class LavalinkNode {
         // remove tracks from the queue
         if (player.repeatMode !== "track" || player.get("internal_skipped")) await queueTrackEnd(player);
         else if (trackToUse && !trackToUse?.pluginInfo?.clientData?.previousTrack) { // If there was a current Track already and repeatmode === true, add it to the queue.
-            player.queue.previous.unshift(trackToUse as Track);
-            if (player.queue.previous.length > player.queue.options.maxPreviousTracks) player.queue.previous.splice(player.queue.options.maxPreviousTracks, player.queue.previous.length);
+            await player.queue.addToPrevious(trackToUse as Track);
             await player.queue.utils.save();
         }
         // if no track available, end queue
@@ -1382,7 +1382,7 @@ export class LavalinkNode {
         }
         this.NodeManager.LavalinkManager.emit("trackStuck", player, track || this.getTrackOfPayload(payload), payload);
         // If there are no songs in the queue
-        if (!player.queue.tracks.length && (player.repeatMode === "off" || player.get("internal_stopPlaying"))) {
+        if (!(await player.queue.getTrackCount()) && (player.repeatMode === "off" || player.get("internal_stopPlaying"))) {
             try { //Sometimes the trackStuck event triggers from the Lavalink server, but the track continues playing or resumes after. We explicitly end the track in such cases
                 await player.node.updatePlayer({ guildId: player.guildId, playerOptions: { track: { encoded: null } } });  //trackEnd -> queueEnd
                 return;
@@ -1581,7 +1581,7 @@ export class LavalinkNode {
             if (!duration || duration > this.NodeManager.LavalinkManager.options.playerOptions.minAutoPlayMs || !!player.get("internal_skipped")) {
                 await this.NodeManager.LavalinkManager.options?.playerOptions?.onEmptyQueue?.autoPlayFunction(player, track);
                 player.set("internal_previousautoplay", Date.now());
-                if (player.queue.tracks.length > 0) await queueTrackEnd(player);
+                if ((await player.queue.getTrackCount()) > 0) await queueTrackEnd(player);
                 else if (this.NodeManager.LavalinkManager.options?.advancedOptions?.enableDebugEvents) {
                     this.NodeManager.LavalinkManager.emit("debug", DebugEvents.AutoplayNoSongsAdded, {
                         state: "warn",
@@ -1608,8 +1608,7 @@ export class LavalinkNode {
         player.set("internal_autoplayStopPlaying", undefined);
 
         if (track && !track?.pluginInfo?.clientData?.previousTrack) { // If there was a current Track already and repeatmode === true, add it to the queue.
-            player.queue.previous.unshift(track);
-            if (player.queue.previous.length > player.queue.options.maxPreviousTracks) player.queue.previous.splice(player.queue.options.maxPreviousTracks, player.queue.previous.length);
+            await player.queue.addToPrevious(track);
             await player.queue.utils.save();
         }
 
