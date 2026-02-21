@@ -2,8 +2,10 @@ import { ManagerUtils, MiniMap, QueueSymbol } from "./Utils";
 
 import type { Track, UnresolvedTrack } from "./Types/Track";
 import type {
-    ManagerQueueOptions, QueueChangesWatcher, QueueStoreManager, StoredQueue
+    ManagerQueueOptions, QueueChangesWatcher, QueueStoreManager, StoredQueue,
+    TargetedQueueStoreManager
 } from "./Types/Queue";
+import { isTargetedStore } from "./Types/Queue";
 export class QueueSaver {
     /**
      * The queue store manager
@@ -21,6 +23,9 @@ export class QueueSaver {
             maxPreviousTracks: options?.maxPreviousTracks || 25,
         };
     }
+
+    /** Expose the underlying store manager */
+    public get store(): QueueStoreManager { return this._; }
 
     /**
      * Get the queue for a guild
@@ -138,6 +143,7 @@ export class Queue {
     private readonly QueueSaver: QueueSaver | null = null;
     private managerUtils = new ManagerUtils();
     private queueChanges: QueueChangesWatcher | null;
+    private readonly targeted: TargetedQueueStoreManager | null = null;
 
     /**
      * Check if a track is valid (has proper duration and is not too short)
@@ -173,11 +179,20 @@ export class Queue {
         this.current = this.managerUtils.isTrack(data.current) ? data.current : null;
         // tracks and previous are NOT stored in memory - they live in Redis
 
+        // Detect targeted store for fast-path operations
+        const store = this.QueueSaver?.store;
+        if (store && isTargetedStore(store)) this.targeted = store;
+
         Object.defineProperty(this, QueueSymbol, { configurable: true, value: true });
     }
 
     /** Load the full queue state from Redis, with current from memory */
     private async _load(): Promise<StoredQueue> {
+        if (this.targeted) {
+            const stored = await this.targeted.loadFull(this.guildId);
+            stored.current = this.current;
+            return stored;
+        }
         const data = await this.QueueSaver.get(this.guildId);
         return {
             current: this.current,
@@ -190,6 +205,10 @@ export class Queue {
     private async _save(stored: StoredQueue): Promise<void> {
         if (stored.previous.length > this.options.maxPreviousTracks) {
             stored.previous.splice(this.options.maxPreviousTracks, stored.previous.length);
+        }
+        if (this.targeted) {
+            await this.targeted.saveFull(this.guildId, stored, this.options.maxPreviousTracks);
+            return;
         }
         await this.QueueSaver.set(this.guildId, stored);
     }
@@ -205,48 +224,56 @@ export class Queue {
 
     /** Get all tracks from Redis */
     public async getTracks(): Promise<(Track | UnresolvedTrack)[]> {
+        if (this.targeted) return this.targeted.getAllTracks(this.guildId);
         const stored = await this._load();
         return stored.tracks;
     }
 
     /** Get the number of tracks in the queue */
     public async getTrackCount(): Promise<number> {
+        if (this.targeted) return this.targeted.getTracksCount(this.guildId);
         const stored = await this._load();
         return stored.tracks.length;
     }
 
     /** Get a track at a specific index */
     public async getTrack(index: number): Promise<Track | UnresolvedTrack | undefined> {
+        if (this.targeted) return this.targeted.getTrackAt(this.guildId, index) ?? undefined;
         const stored = await this._load();
         return stored.tracks[index];
     }
 
     /** Get a slice of tracks */
     public async getTracksSlice(start: number, end?: number): Promise<(Track | UnresolvedTrack)[]> {
+        if (this.targeted) return this.targeted.getTracksRange(this.guildId, start, end ?? -1);
         const stored = await this._load();
         return stored.tracks.slice(start, end);
     }
 
     /** Get all previous tracks from Redis */
     public async getPrevious(): Promise<Track[]> {
+        if (this.targeted) return this.targeted.getAllPrevious(this.guildId);
         const stored = await this._load();
         return stored.previous;
     }
 
     /** Get a previous track at a specific index */
     public async getPreviousTrack(index: number): Promise<Track | undefined> {
+        if (this.targeted) return this.targeted.getPreviousAt(this.guildId, index) ?? undefined;
         const stored = await this._load();
         return stored.previous[index];
     }
 
     /** Get the number of previous tracks */
     public async getPreviousCount(): Promise<number> {
+        if (this.targeted) return this.targeted.getPreviousCount(this.guildId);
         const stored = await this._load();
         return stored.previous.length;
     }
 
     /** Clear all tracks from the queue */
     public async clearTracks(): Promise<void> {
+        if (this.targeted) { await this.targeted.clearTracks(this.guildId); return; }
         const stored = await this._load();
         stored.tracks = [];
         await this._save(stored);
@@ -254,6 +281,7 @@ export class Queue {
 
     /** Add a track to the beginning of the queue */
     public async unshiftTrack(track: Track | UnresolvedTrack): Promise<number> {
+        if (this.targeted) return this.targeted.unshiftTrack(this.guildId, track);
         const stored = await this._load();
         stored.tracks.unshift(track);
         await this._save(stored);
@@ -262,6 +290,7 @@ export class Queue {
 
     /** Remove and return the first track from the queue */
     public async shiftTrack(): Promise<Track | UnresolvedTrack | undefined> {
+        if (this.targeted) return this.targeted.shiftTrack(this.guildId) ?? undefined;
         const stored = await this._load();
         const shifted = stored.tracks.shift();
         if (shifted) await this._save(stored);
@@ -270,6 +299,7 @@ export class Queue {
 
     /** Add a track to the end of the queue */
     public async pushTrack(track: Track | UnresolvedTrack): Promise<number> {
+        if (this.targeted) return this.targeted.pushTrack(this.guildId, track);
         const stored = await this._load();
         stored.tracks.push(track);
         await this._save(stored);
@@ -278,6 +308,7 @@ export class Queue {
 
     /** Replace all tracks in the queue */
     public async setTracks(tracks: (Track | UnresolvedTrack)[]): Promise<void> {
+        if (this.targeted) { await this.targeted.replaceTracks(this.guildId, tracks); return; }
         const stored = await this._load();
         stored.tracks = tracks;
         await this._save(stored);
@@ -300,6 +331,7 @@ export class Queue {
 
     /** Add a track to the beginning of the previous tracks array */
     public async addToPrevious(track: Track): Promise<void> {
+        if (this.targeted) { await this.targeted.addToPrevious(this.guildId, track, this.options.maxPreviousTracks); return; }
         const stored = await this._load();
         stored.previous.unshift(track);
         await this._save(stored);
@@ -307,6 +339,12 @@ export class Queue {
 
     /** Replace a track at a specific index */
     public async replaceTrack(index: number, track: Track | UnresolvedTrack): Promise<boolean> {
+        if (this.targeted) {
+            const count = await this.targeted.getTracksCount(this.guildId);
+            if (index < 0 || index >= count) return false;
+            await this.targeted.setTrackAt(this.guildId, index, track);
+            return true;
+        }
         const stored = await this._load();
         if (index < 0 || index >= stored.tracks.length) return false;
         stored.tracks[index] = track;
@@ -316,6 +354,20 @@ export class Queue {
 
     /** Swap two tracks in the queue */
     public async swapTracks(i: number, j: number): Promise<boolean> {
+        if (this.targeted) {
+            const count = await this.targeted.getTracksCount(this.guildId);
+            if (i < 0 || i >= count || j < 0 || j >= count) return false;
+            const [trackI, trackJ] = await Promise.all([
+                this.targeted.getTrackAt(this.guildId, i),
+                this.targeted.getTrackAt(this.guildId, j),
+            ]);
+            if (!trackI || !trackJ) return false;
+            await Promise.all([
+                this.targeted.setTrackAt(this.guildId, i, trackJ),
+                this.targeted.setTrackAt(this.guildId, j, trackI),
+            ]);
+            return true;
+        }
         const stored = await this._load();
         if (i < 0 || i >= stored.tracks.length || j < 0 || j >= stored.tracks.length) return false;
         [stored.tracks[i], stored.tracks[j]] = [stored.tracks[j], stored.tracks[i]];
@@ -331,6 +383,10 @@ export class Queue {
          * Save the current cached Queue on the database/server (overides the server)
          */
         save: async () => {
+            if (this.targeted) {
+                await this.targeted.setCurrent(this.guildId, this.current);
+                return;
+            }
             const stored = await this._load();
             await this._save(stored);
         },
@@ -347,6 +403,7 @@ export class Queue {
         },
 
         destroy: async () => {
+            if (this.targeted) { await this.targeted.deleteAll(this.guildId); return; }
             return await this.QueueSaver.delete(this.guildId);
         },
 
@@ -604,6 +661,7 @@ export class Queue {
      * ```
      */
     public async shiftPrevious() {
+        if (this.targeted) return this.targeted.shiftPrevious(this.guildId);
         const stored = await this._load();
         const removed = stored.previous.shift();
         if (removed) await this._save(stored);

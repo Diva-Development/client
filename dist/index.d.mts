@@ -838,6 +838,8 @@ declare class QueueSaver {
         maxPreviousTracks: number;
     };
     constructor(options: ManagerQueueOptions);
+    /** Expose the underlying store manager */
+    get store(): QueueStoreManager;
     /**
      * Get the queue for a guild
      * @param guildId The guild ID
@@ -908,6 +910,7 @@ declare class Queue {
     private readonly QueueSaver;
     private managerUtils;
     private queueChanges;
+    private readonly targeted;
     /**
      * Check if a track is valid (has proper duration and is not too short)
      * @param track The track to validate
@@ -1319,6 +1322,31 @@ interface ManagerQueueOptions<CustomPlayerT extends Player = Player> {
     /** Custom Queue Watcher class */
     queueChangesWatcher?: QueueChangesWatcher;
 }
+interface TargetedQueueStoreManager extends QueueStoreManager {
+    readonly supportsTargetedOps: true;
+    getCurrent(guildId: string): Awaitable<Track | null>;
+    setCurrent(guildId: string, track: Track | null): Awaitable<void>;
+    getTracksCount(guildId: string): Awaitable<number>;
+    getTrackAt(guildId: string, index: number): Awaitable<Track | UnresolvedTrack | null>;
+    getTracksRange(guildId: string, start: number, end: number): Awaitable<(Track | UnresolvedTrack)[]>;
+    getAllTracks(guildId: string): Awaitable<(Track | UnresolvedTrack)[]>;
+    pushTrack(guildId: string, ...tracks: (Track | UnresolvedTrack)[]): Awaitable<number>;
+    unshiftTrack(guildId: string, ...tracks: (Track | UnresolvedTrack)[]): Awaitable<number>;
+    shiftTrack(guildId: string): Awaitable<Track | UnresolvedTrack | null>;
+    setTrackAt(guildId: string, index: number, track: Track | UnresolvedTrack): Awaitable<void>;
+    clearTracks(guildId: string): Awaitable<void>;
+    replaceTracks(guildId: string, tracks: (Track | UnresolvedTrack)[]): Awaitable<void>;
+    getPreviousCount(guildId: string): Awaitable<number>;
+    getPreviousAt(guildId: string, index: number): Awaitable<Track | null>;
+    getAllPrevious(guildId: string): Awaitable<Track[]>;
+    addToPrevious(guildId: string, track: Track, maxSize: number): Awaitable<void>;
+    shiftPrevious(guildId: string): Awaitable<Track | null>;
+    clearPrevious(guildId: string): Awaitable<void>;
+    loadFull(guildId: string): Awaitable<StoredQueue>;
+    saveFull(guildId: string, stored: StoredQueue, maxPreviousTracks: number): Awaitable<void>;
+    deleteAll(guildId: string): Awaitable<void>;
+}
+declare function isTargetedStore(store: QueueStoreManager): store is TargetedQueueStoreManager;
 interface QueueChangesWatcher {
     /** get a Value (MUST RETURN UNPARSED!) */
     tracksAdd: (guildId: string, tracks: (Track | UnresolvedTrack)[], position: number, oldStoredQueue: StoredQueue, newStoredQueue: StoredQueue) => void;
@@ -3364,4 +3392,4 @@ declare const LavalinkPlugins: {
 /** Lavalink Sources regexes for url validations */
 declare const SourceLinksRegexes: Record<SourcesRegex, RegExp>;
 
-export { type AudioOutputs, type Awaitable, type Base64, type BaseNodeStats, type BasePlayOptions, type BotClientOptions, type CPUStats, type ChannelDeletePacket, type ChannelMixFilter, type ClientCustomSearchPlatformUtils, type ClientSearchPlatform, DebugEvents, type DeepRequired, DefaultQueueStore, DefaultSources, DestroyReasons, type DestroyReasonsType, DisconnectReasons, type DisconnectReasonsType, type DistortionFilter, type DuncteSearchPlatform, type EQBand, EQList, type Exception, type FailingAddress, type FilterData, FilterManager, type FloatNumber, type FrameStats, type GitObject, type GuildShardPayload, type IntegerNumber, type InvalidLavalinkRestRequest, type JioSaavnSearchPlatform, type KaraokeFilter, type LavaSearchFilteredResponse, type LavaSearchQuery, type LavaSearchResponse, type LavaSearchType, type LavaSrcSearchPlatform, type LavaSrcSearchPlatformBase, type LavalinkClientSearchPlatform, type LavalinkClientSearchPlatformResolve, type LavalinkFilterData, type LavalinkInfo, LavalinkManager, type LavalinkManagerEvents, LavalinkNode, type LavalinkNodeIdentifier, type LavalinkNodeOptions, type LavalinkPlayOptions, type LavalinkPlayer, type LavalinkPlayerVoice, type LavalinkPlayerVoiceOptions, type LavalinkPlugin_JioSaavn_SourceNames, type LavalinkPlugin_LavaSrc_SourceNames, LavalinkPlugins, type LavalinkSearchPlatform, type LavalinkSourceNames, type LavalinkTrack, type LavalinkTrackInfo, type LoadTypes, type LowPassFilter, type LyricsEvent, type LyricsEventType, type LyricsFoundEvent, type LyricsLine, type LyricsLineEvent, type LyricsNotFoundEvent, type LyricsResult, type ManagerOptions, type ManagerPlayerOptions, type ManagerQueueOptions, ManagerUtils, type MemoryStats, MiniMap, type MiniMapConstructor, type ModifyRequest, NodeManager, type NodeManagerEvents, type NodeMessage, type NodeStats, NodeSymbol, type Opaque, type PlayOptions, Player, type PlayerEvent, type PlayerEventType, type PlayerEvents, type PlayerFilters, type PlayerJson, type PlayerOptions, type PlayerUpdateInfo, type PlaylistInfo, type PluginInfo, type PluginObject, Queue, type QueueChangesWatcher, QueueSaver, type QueueStoreManager, QueueSymbol, type RepeatMode, type RequiredManagerOptions, type RotationFilter, type RoutePlanner, type RoutePlannerTypes, type SearchPlatform, type SearchQuery, type SearchResult, type Session, type Severity, SourceLinksRegexes, type SourceNames, type SourcesRegex, type SponsorBlockChapterStarted, type SponsorBlockChaptersLoaded, type SponsorBlockSegment, type SponsorBlockSegmentEventType, type SponsorBlockSegmentEvents, type SponsorBlockSegmentSkipped, type SponsorBlockSegmentsLoaded, type State, type StoredQueue, type TimescaleFilter, type Track, type TrackEndEvent, type TrackEndReason, type TrackExceptionEvent, type TrackInfo, type TrackStartEvent, type TrackStuckEvent, TrackSymbol, type TremoloFilter, type UnresolvedQuery, type UnresolvedSearchResult, type UnresolvedTrack, type UnresolvedTrackInfo, UnresolvedTrackSymbol, type VersionObject, type VibratoFilter, type VoicePacket, type VoiceServer, type VoiceState, type WebSocketClosedEvent, type anyObject, audioOutputsData, parseLavalinkConnUrl, queueTrackEnd, safeStringify, validSponsorBlocks };
+export { type AudioOutputs, type Awaitable, type Base64, type BaseNodeStats, type BasePlayOptions, type BotClientOptions, type CPUStats, type ChannelDeletePacket, type ChannelMixFilter, type ClientCustomSearchPlatformUtils, type ClientSearchPlatform, DebugEvents, type DeepRequired, DefaultQueueStore, DefaultSources, DestroyReasons, type DestroyReasonsType, DisconnectReasons, type DisconnectReasonsType, type DistortionFilter, type DuncteSearchPlatform, type EQBand, EQList, type Exception, type FailingAddress, type FilterData, FilterManager, type FloatNumber, type FrameStats, type GitObject, type GuildShardPayload, type IntegerNumber, type InvalidLavalinkRestRequest, type JioSaavnSearchPlatform, type KaraokeFilter, type LavaSearchFilteredResponse, type LavaSearchQuery, type LavaSearchResponse, type LavaSearchType, type LavaSrcSearchPlatform, type LavaSrcSearchPlatformBase, type LavalinkClientSearchPlatform, type LavalinkClientSearchPlatformResolve, type LavalinkFilterData, type LavalinkInfo, LavalinkManager, type LavalinkManagerEvents, LavalinkNode, type LavalinkNodeIdentifier, type LavalinkNodeOptions, type LavalinkPlayOptions, type LavalinkPlayer, type LavalinkPlayerVoice, type LavalinkPlayerVoiceOptions, type LavalinkPlugin_JioSaavn_SourceNames, type LavalinkPlugin_LavaSrc_SourceNames, LavalinkPlugins, type LavalinkSearchPlatform, type LavalinkSourceNames, type LavalinkTrack, type LavalinkTrackInfo, type LoadTypes, type LowPassFilter, type LyricsEvent, type LyricsEventType, type LyricsFoundEvent, type LyricsLine, type LyricsLineEvent, type LyricsNotFoundEvent, type LyricsResult, type ManagerOptions, type ManagerPlayerOptions, type ManagerQueueOptions, ManagerUtils, type MemoryStats, MiniMap, type MiniMapConstructor, type ModifyRequest, NodeManager, type NodeManagerEvents, type NodeMessage, type NodeStats, NodeSymbol, type Opaque, type PlayOptions, Player, type PlayerEvent, type PlayerEventType, type PlayerEvents, type PlayerFilters, type PlayerJson, type PlayerOptions, type PlayerUpdateInfo, type PlaylistInfo, type PluginInfo, type PluginObject, Queue, type QueueChangesWatcher, QueueSaver, type QueueStoreManager, QueueSymbol, type RepeatMode, type RequiredManagerOptions, type RotationFilter, type RoutePlanner, type RoutePlannerTypes, type SearchPlatform, type SearchQuery, type SearchResult, type Session, type Severity, SourceLinksRegexes, type SourceNames, type SourcesRegex, type SponsorBlockChapterStarted, type SponsorBlockChaptersLoaded, type SponsorBlockSegment, type SponsorBlockSegmentEventType, type SponsorBlockSegmentEvents, type SponsorBlockSegmentSkipped, type SponsorBlockSegmentsLoaded, type State, type StoredQueue, type TargetedQueueStoreManager, type TimescaleFilter, type Track, type TrackEndEvent, type TrackEndReason, type TrackExceptionEvent, type TrackInfo, type TrackStartEvent, type TrackStuckEvent, TrackSymbol, type TremoloFilter, type UnresolvedQuery, type UnresolvedSearchResult, type UnresolvedTrack, type UnresolvedTrackInfo, UnresolvedTrackSymbol, type VersionObject, type VibratoFilter, type VoicePacket, type VoiceServer, type VoiceState, type WebSocketClosedEvent, type anyObject, audioOutputsData, isTargetedStore, parseLavalinkConnUrl, queueTrackEnd, safeStringify, validSponsorBlocks };

@@ -30,6 +30,45 @@ export interface ManagerQueueOptions<CustomPlayerT extends Player = Player> {
     queueChangesWatcher?: QueueChangesWatcher;
 }
 
+export interface TargetedQueueStoreManager extends QueueStoreManager {
+    readonly supportsTargetedOps: true;
+
+    // Current track
+    getCurrent(guildId: string): Awaitable<Track | null>;
+    setCurrent(guildId: string, track: Track | null): Awaitable<void>;
+
+    // Tracks list
+    getTracksCount(guildId: string): Awaitable<number>;
+    getTrackAt(guildId: string, index: number): Awaitable<Track | UnresolvedTrack | null>;
+    getTracksRange(guildId: string, start: number, end: number): Awaitable<(Track | UnresolvedTrack)[]>;
+    getAllTracks(guildId: string): Awaitable<(Track | UnresolvedTrack)[]>;
+    pushTrack(guildId: string, ...tracks: (Track | UnresolvedTrack)[]): Awaitable<number>;
+    unshiftTrack(guildId: string, ...tracks: (Track | UnresolvedTrack)[]): Awaitable<number>;
+    shiftTrack(guildId: string): Awaitable<Track | UnresolvedTrack | null>;
+    setTrackAt(guildId: string, index: number, track: Track | UnresolvedTrack): Awaitable<void>;
+    clearTracks(guildId: string): Awaitable<void>;
+    replaceTracks(guildId: string, tracks: (Track | UnresolvedTrack)[]): Awaitable<void>;
+
+    // Previous list
+    getPreviousCount(guildId: string): Awaitable<number>;
+    getPreviousAt(guildId: string, index: number): Awaitable<Track | null>;
+    getAllPrevious(guildId: string): Awaitable<Track[]>;
+    addToPrevious(guildId: string, track: Track, maxSize: number): Awaitable<void>;
+    shiftPrevious(guildId: string): Awaitable<Track | null>;
+    clearPrevious(guildId: string): Awaitable<void>;
+
+    // Full load/save for complex ops
+    loadFull(guildId: string): Awaitable<StoredQueue>;
+    saveFull(guildId: string, stored: StoredQueue, maxPreviousTracks: number): Awaitable<void>;
+
+    // Lifecycle
+    deleteAll(guildId: string): Awaitable<void>;
+}
+
+export function isTargetedStore(store: QueueStoreManager): store is TargetedQueueStoreManager {
+    return 'supportsTargetedOps' in store && (store as any).supportsTargetedOps === true;
+}
+
 export interface QueueChangesWatcher {
     /** get a Value (MUST RETURN UNPARSED!) */
     tracksAdd: (guildId: string, tracks: (Track | UnresolvedTrack)[], position: number, oldStoredQueue: StoredQueue, newStoredQueue: StoredQueue) => void;
