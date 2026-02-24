@@ -929,6 +929,10 @@ declare class Queue {
     private _load;
     /** Save the full queue state to Redis, enforcing maxPreviousTracks */
     private _save;
+    /** Empty snapshot for watcher callbacks (watcher only uses guildId) */
+    private _emptySnapshot;
+    /** Find track index by matching fields server-side via Lua */
+    private _findMatchingTrackIndex;
     /** Create a shallow copy of a StoredQueue for change watcher snapshots */
     private _snapshot;
     /** Get all tracks from Redis */
@@ -1342,6 +1346,13 @@ interface TargetedQueueStoreManager extends QueueStoreManager {
     addToPrevious(guildId: string, track: Track, maxSize: number): Awaitable<void>;
     shiftPrevious(guildId: string): Awaitable<Track | null>;
     clearPrevious(guildId: string): Awaitable<void>;
+    shuffleTracks(guildId: string): Awaitable<number>;
+    insertTracksAt(guildId: string, index: number, tracks: (Track | UnresolvedTrack)[]): Awaitable<number>;
+    spliceTracks(guildId: string, index: number, deleteCount: number, tracks?: (Track | UnresolvedTrack)[]): Awaitable<string[]>;
+    removeTracksByIndices(guildId: string, indices: number[]): Awaitable<string[]>;
+    moveTrack(guildId: string, from: number, to: number): Awaitable<void>;
+    findTrackIndex(guildId: string, track: Track | UnresolvedTrack): Awaitable<number>;
+    totalTracksDuration(guildId: string): Awaitable<number>;
     loadFull(guildId: string): Awaitable<StoredQueue>;
     saveFull(guildId: string, stored: StoredQueue, maxPreviousTracks: number): Awaitable<void>;
     deleteAll(guildId: string): Awaitable<void>;

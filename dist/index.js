@@ -3643,6 +3643,15 @@ var Queue = class {
     }
     await this.QueueSaver.set(this.guildId, stored);
   }
+  /** Empty snapshot for watcher callbacks (watcher only uses guildId) */
+  _emptySnapshot() {
+    return { current: null, previous: [], tracks: [] };
+  }
+  /** Find track index by matching fields server-side via Lua */
+  async _findMatchingTrackIndex(track) {
+    if (!this.targeted) return -1;
+    return this.targeted.findTrackIndex(this.guildId, track);
+  }
   /** Create a shallow copy of a StoredQueue for change watcher snapshots */
   _snapshot(stored) {
     return {
@@ -3739,6 +3748,10 @@ var Queue = class {
   }
   /** Move a track from one position to another */
   async moveTrack(from, to) {
+    if (this.targeted) {
+      await this.targeted.moveTrack(this.guildId, from, to);
+      return;
+    }
     const stored = await this._load();
     if (from < 0 || from >= stored.tracks.length) return;
     const [moved] = stored.tracks.splice(from, 1);
@@ -3747,6 +3760,19 @@ var Queue = class {
   }
   /** Find the index of a track matching a predicate */
   async findTrackIndex(predicate) {
+    if (this.targeted) {
+      const batchSize = 100;
+      let offset = 0;
+      while (true) {
+        const batch = await this.targeted.getTracksRange(this.guildId, offset, offset + batchSize);
+        if (!batch.length) return -1;
+        for (let i = 0; i < batch.length; i++) {
+          if (predicate(batch[i])) return offset + i;
+        }
+        if (batch.length < batchSize) return -1;
+        offset += batchSize;
+      }
+    }
     const stored = await this._load();
     return stored.tracks.findIndex(predicate);
   }
@@ -3846,6 +3872,10 @@ var Queue = class {
      * @returns {Promise<number>}
      */
     totalDuration: async () => {
+      if (this.targeted) {
+        const tracksDuration = await this.targeted.totalTracksDuration(this.guildId);
+        return tracksDuration + (this.current?.info?.duration || 0);
+      }
       const stored = await this._load();
       return stored.tracks.reduce((acc, cur) => acc + (cur.info?.duration || 0), this.current?.info?.duration || 0);
     }
@@ -3855,6 +3885,14 @@ var Queue = class {
    * @returns Amount of Tracks in the Queue
    */
   async shuffle() {
+    if (this.targeted) {
+      const empty = this._emptySnapshot();
+      if (typeof this.queueChanges?.shuffled === "function") try {
+        this.queueChanges.shuffled(this.guildId, empty, empty);
+      } catch {
+      }
+      return this.targeted.shuffleTracks(this.guildId);
+    }
     const stored = await this._load();
     const oldStored = typeof this.queueChanges?.shuffled === "function" ? this._snapshot(stored) : null;
     if (stored.tracks.length <= 1) return stored.tracks.length;
@@ -3878,6 +3916,26 @@ var Queue = class {
    */
   async add(TrackOrTracks, index) {
     const validTracks = (Array.isArray(TrackOrTracks) ? TrackOrTracks : [TrackOrTracks]).flat(2).filter((v) => this.managerUtils.isTrack(v) || this.managerUtils.isUnresolvedTrack(v)).filter((v) => this.isValid(v));
+    if (this.targeted) {
+      const empty = this._emptySnapshot();
+      if (typeof index === "number" && index >= 0) {
+        const count = await this.targeted.getTracksCount(this.guildId);
+        if (index < count) {
+          const newLen2 = await this.targeted.insertTracksAt(this.guildId, index, validTracks);
+          if (typeof this.queueChanges?.tracksAdd === "function") try {
+            this.queueChanges.tracksAdd(this.guildId, validTracks, index, empty, empty);
+          } catch {
+          }
+          return newLen2;
+        }
+      }
+      const newLen = await this.targeted.pushTrack(this.guildId, ...validTracks);
+      if (typeof this.queueChanges?.tracksAdd === "function") try {
+        this.queueChanges.tracksAdd(this.guildId, validTracks, newLen, empty, empty);
+      } catch {
+      }
+      return newLen;
+    }
     const stored = await this._load();
     if (typeof index === "number" && index >= 0 && index < stored.tracks.length) {
       const oldStored2 = typeof this.queueChanges?.tracksAdd === "function" || typeof this.queueChanges?.tracksRemoved === "function" ? this._snapshot(stored) : null;
@@ -3906,13 +3964,38 @@ var Queue = class {
    * @returns {Track} Spliced Track
    */
   async splice(index, amount, TrackOrTracks) {
+    const validTracks = TrackOrTracks ? (Array.isArray(TrackOrTracks) ? TrackOrTracks : [TrackOrTracks]).flat(2).filter((v) => this.managerUtils.isTrack(v) || this.managerUtils.isUnresolvedTrack(v)).filter((v) => this.isValid(v)) : [];
+    if (this.targeted) {
+      const count = await this.targeted.getTracksCount(this.guildId);
+      if (!count) {
+        if (TrackOrTracks) return await this.add(TrackOrTracks);
+        return null;
+      }
+      const empty = this._emptySnapshot();
+      const removedRaw = await this.targeted.spliceTracks(this.guildId, index, amount, validTracks.length ? validTracks : void 0);
+      const spliced2 = removedRaw.map((r) => {
+        try {
+          return JSON.parse(r);
+        } catch {
+          return null;
+        }
+      }).filter(Boolean);
+      if (validTracks.length && typeof this.queueChanges?.tracksAdd === "function") try {
+        this.queueChanges.tracksAdd(this.guildId, validTracks, index, empty, empty);
+      } catch {
+      }
+      if (typeof this.queueChanges?.tracksRemoved === "function") try {
+        this.queueChanges.tracksRemoved(this.guildId, spliced2, index, empty, empty);
+      } catch {
+      }
+      return spliced2.length === 1 ? spliced2[0] : spliced2;
+    }
     const stored = await this._load();
     const oldStored = typeof this.queueChanges?.tracksAdd === "function" || typeof this.queueChanges?.tracksRemoved === "function" ? this._snapshot(stored) : null;
     if (!stored.tracks.length) {
       if (TrackOrTracks) return await this.add(TrackOrTracks);
       return null;
     }
-    const validTracks = TrackOrTracks ? (Array.isArray(TrackOrTracks) ? TrackOrTracks : [TrackOrTracks]).flat(2).filter((v) => this.managerUtils.isTrack(v) || this.managerUtils.isUnresolvedTrack(v)).filter((v) => this.isValid(v)) : [];
     if (TrackOrTracks && typeof this.queueChanges?.tracksAdd === "function") try {
       this.queueChanges.tracksAdd(this.guildId, validTracks, index, oldStored, this._snapshot(stored));
     } catch {
@@ -3959,6 +4042,87 @@ var Queue = class {
    * ```
    */
   async remove(removeQueryTrack) {
+    if (this.targeted) {
+      const empty = this._emptySnapshot();
+      if (typeof removeQueryTrack === "number") {
+        const removedRaw2 = await this.targeted.removeTracksByIndices(this.guildId, [removeQueryTrack]);
+        if (!removedRaw2.length) return null;
+        const removed3 = removedRaw2.map((r) => {
+          try {
+            return JSON.parse(r);
+          } catch {
+            return null;
+          }
+        }).filter(Boolean);
+        if (!removed3.length) return null;
+        if (typeof this.queueChanges?.tracksRemoved === "function") try {
+          this.queueChanges.tracksRemoved(this.guildId, removed3, removeQueryTrack, empty, empty);
+        } catch {
+        }
+        return { removed: removed3 };
+      }
+      if (Array.isArray(removeQueryTrack)) {
+        if (removeQueryTrack.every((v) => typeof v === "number")) {
+          const indices = removeQueryTrack;
+          const removedRaw3 = await this.targeted.removeTracksByIndices(this.guildId, indices);
+          if (!removedRaw3.length) return null;
+          const removed4 = removedRaw3.map((r) => {
+            try {
+              return JSON.parse(r);
+            } catch {
+              return null;
+            }
+          }).filter(Boolean);
+          if (!removed4.length) return null;
+          if (typeof this.queueChanges?.tracksRemoved === "function") try {
+            this.queueChanges.tracksRemoved(this.guildId, removed4, indices, empty, empty);
+          } catch {
+          }
+          return { removed: removed4 };
+        }
+        const allTracks = await this.targeted.getAllTracks(this.guildId);
+        const indicesToRemove = [];
+        for (let i = 0; i < allTracks.length; i++) {
+          const v = allTracks[i];
+          if (removeQueryTrack.find(
+            (t) => typeof t === "number" && t === i || typeof t === "object" && (t.encoded && t.encoded === v.encoded || t.info?.identifier && t.info.identifier === v.info?.identifier || t.info?.uri && t.info.uri === v.info?.uri || t.info?.title && t.info.title === v.info?.title || t.info?.isrc && t.info.isrc === v.info?.isrc || t.info?.artworkUrl && t.info.artworkUrl === v.info?.artworkUrl)
+          )) {
+            indicesToRemove.push(i);
+          }
+        }
+        if (!indicesToRemove.length) return null;
+        const removedRaw2 = await this.targeted.removeTracksByIndices(this.guildId, indicesToRemove);
+        const removed3 = removedRaw2.map((r) => {
+          try {
+            return JSON.parse(r);
+          } catch {
+            return null;
+          }
+        }).filter(Boolean);
+        if (!removed3.length) return null;
+        if (typeof this.queueChanges?.tracksRemoved === "function") try {
+          this.queueChanges.tracksRemoved(this.guildId, removed3, indicesToRemove, empty, empty);
+        } catch {
+        }
+        return { removed: removed3 };
+      }
+      const idx = await this._findMatchingTrackIndex(removeQueryTrack);
+      if (idx < 0) return null;
+      const removedRaw = await this.targeted.removeTracksByIndices(this.guildId, [idx]);
+      const removed2 = removedRaw.map((r) => {
+        try {
+          return JSON.parse(r);
+        } catch {
+          return null;
+        }
+      }).filter(Boolean);
+      if (!removed2.length) return null;
+      if (typeof this.queueChanges?.tracksRemoved === "function") try {
+        this.queueChanges.tracksRemoved(this.guildId, removed2, idx, empty, empty);
+      } catch {
+      }
+      return { removed: removed2 };
+    }
     const stored = await this._load();
     const oldStored = typeof this.queueChanges?.tracksRemoved === "function" ? this._snapshot(stored) : null;
     if (typeof removeQueryTrack === "number") {
