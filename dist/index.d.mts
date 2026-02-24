@@ -2059,6 +2059,8 @@ interface LavalinkPlayerVoice {
     endpoint: string;
     /** The Voice SessionId */
     sessionId: string;
+    /** The Voice Channel Id */
+    channelId?: string;
     /** Wether or not the player is connected */
     connected?: boolean;
     /** The Ping to the voice server */

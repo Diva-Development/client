@@ -3579,7 +3579,6 @@ var DefaultQueueStore = class {
   */
 };
 var Queue = class {
-  // tracks and previous live exclusively in Redis - no in-memory arrays
   current = null;
   options = { maxPreviousTracks: 25 };
   guildId = "";
@@ -4254,7 +4253,8 @@ var Player = class {
   voice = {
     endpoint: null,
     sessionId: null,
-    token: null
+    token: null,
+    channelId: void 0
   };
   voiceState = {
     selfDeaf: false,
@@ -4944,7 +4944,8 @@ var Player = class {
           voice: {
             token: this.voice.token,
             endpoint: this.voice.endpoint,
-            sessionId: this.voice.sessionId
+            sessionId: this.voice.sessionId,
+            channelId: this.voice.channelId
           }
         }
       });
@@ -5476,7 +5477,8 @@ var LavalinkManager = class extends import_events2.EventEmitter {
               voice: {
                 token: update.token,
                 endpoint: update.endpoint,
-                sessionId: sessionId2Use
+                sessionId: sessionId2Use,
+                channelId: player.voice.channelId
               }
             }
           });
@@ -5508,6 +5510,7 @@ var LavalinkManager = class extends import_events2.EventEmitter {
       if (update.channel_id) {
         if (player.voiceChannelId !== update.channel_id) this.emit("playerMove", player, player.voiceChannelId, update.channel_id);
         player.voice.sessionId = update.session_id || player.voice.sessionId;
+        player.voice.channelId = update.channel_id;
         if (!player.voice.sessionId) {
           if (this.options?.advancedOptions?.enableDebugEvents) {
             this.emit("debug", "NoAudioDebug" /* NoAudioDebug */, {
