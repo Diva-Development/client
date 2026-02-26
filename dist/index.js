@@ -5478,7 +5478,7 @@ var LavalinkManager = class extends import_events2.EventEmitter {
                 token: update.token,
                 endpoint: update.endpoint,
                 sessionId: sessionId2Use,
-                channelId: player.voice.channelId
+                channelId: update.channel_id || player.voice.channelId
               }
             }
           });
@@ -5510,7 +5510,7 @@ var LavalinkManager = class extends import_events2.EventEmitter {
       if (update.channel_id) {
         if (player.voiceChannelId !== update.channel_id) this.emit("playerMove", player, player.voiceChannelId, update.channel_id);
         player.voice.sessionId = update.session_id || player.voice.sessionId;
-        player.voice.channelId = update.channel_id;
+        player.voice.channelId = update.channel_id || player.voice.channelId;
         if (!player.voice.sessionId) {
           if (this.options?.advancedOptions?.enableDebugEvents) {
             this.emit("debug", "NoAudioDebug" /* NoAudioDebug */, {
