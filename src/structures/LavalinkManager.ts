@@ -581,6 +581,7 @@ export class LavalinkManager<CustomPlayerT extends Player = Player> extends Even
                 }
 
                 player.voiceChannelId = update.channel_id;
+                player.options.voiceChannelId = update.channel_id;
 
                 const selfMuteChanged = typeof update.self_mute === "boolean" && player.voiceState.selfMute !== update.self_mute;
                 const serverMuteChanged = typeof update.mute === "boolean" && player.voiceState.serverMute !== update.mute;

@@ -5461,6 +5461,7 @@ var LavalinkManager = class extends EventEmitter2 {
           if (this.options?.advancedOptions?.debugOptions?.noAudio === true) console.debug(`Lavalink-Client-Debug | NO-AUDIO [::] sendRawData function, Function to assing sessionId provided, but no found in Payload: ${safeStringify(update, 2)}`);
         }
         player.voiceChannelId = update.channel_id;
+        player.options.voiceChannelId = update.channel_id;
         const selfMuteChanged = typeof update.self_mute === "boolean" && player.voiceState.selfMute !== update.self_mute;
         const serverMuteChanged = typeof update.mute === "boolean" && player.voiceState.serverMute !== update.mute;
         const selfDeafChanged = typeof update.self_deaf === "boolean" && player.voiceState.selfDeaf !== update.self_deaf;
