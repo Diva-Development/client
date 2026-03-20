@@ -1040,6 +1040,7 @@ export class LavalinkNode {
      */
     private reconnect(instaReconnect = false): void {
         this.NodeManager.emit("reconnectinprogress", this);
+        const resumeSessionId = this.resuming.enabled ? this.sessionId : undefined;
         if (instaReconnect) {
             if (this.reconnectAttempts >= this.options.retryAmount) {
                 const error = new Error(`Unable to connect after ${this.options.retryAmount} attempts.`)
@@ -1050,7 +1051,7 @@ export class LavalinkNode {
             this.socket.removeAllListeners();
             this.socket = null;
             this.NodeManager.emit("reconnecting", this);
-            this.connect();
+            this.connect(resumeSessionId);
             this.reconnectAttempts++;
             return;
         }
@@ -1064,7 +1065,7 @@ export class LavalinkNode {
             this.socket.removeAllListeners();
             this.socket = null;
             this.NodeManager.emit("reconnecting", this);
-            this.connect();
+            this.connect(resumeSessionId);
             this.reconnectAttempts++;
         }, this.options.retryDelay || 1000);
     }
