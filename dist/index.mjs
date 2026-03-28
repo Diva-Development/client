@@ -838,17 +838,16 @@ var MiniMap = class extends Map {
 };
 async function queueTrackEnd(player, dontShiftQueue = false) {
   if (player.queue.current && !player.queue.current?.pluginInfo?.clientData?.previousTrack) {
-    player.queue.previous.unshift(player.queue.current);
-    if (player.queue.previous.length > player.queue.options.maxPreviousTracks) player.queue.previous.splice(player.queue.options.maxPreviousTracks, player.queue.previous.length);
+    await player.queue.addToPrevious(player.queue.current);
     await player.queue.utils.save();
   }
   if (player.repeatMode === "queue" && player.queue.current) {
     const duration = player.queue.current.info?.duration;
     if (duration && !isNaN(duration) && duration >= 1e4) {
-      player.queue.tracks.push(player.queue.current);
+      await player.queue.pushTrack(player.queue.current);
     }
   }
-  const nextSong = dontShiftQueue ? null : player.queue.tracks.shift();
+  const nextSong = dontShiftQueue ? null : await player.queue.shiftTrack();
   try {
     if (nextSong && player.LavalinkManager.utils.isUnresolvedTrack(nextSong)) await nextSong.resolve(player);
     player.queue.current = nextSong || null;
@@ -863,7 +862,7 @@ async function queueTrackEnd(player, dontShiftQueue = false) {
       });
     }
     player.LavalinkManager.emit("trackError", player, player.queue.current, error);
-    if (!dontShiftQueue && player.LavalinkManager.options?.autoSkipOnResolveError === true && player.queue.tracks[0]) return queueTrackEnd(player);
+    if (!dontShiftQueue && player.LavalinkManager.options?.autoSkipOnResolveError === true && await player.queue.getTrackCount() > 0) return queueTrackEnd(player);
   }
   return player.queue.current;
 }
@@ -1897,7 +1896,7 @@ var LavalinkNode = class {
             }
             return;
           }
-          const oldPlayer = player?.toJSON();
+          const oldPlayer = await player?.toJSON();
           player.lastPositionChange = Date.now();
           player.lastPosition = payload.state.position || 0;
           player.connected = payload.state.connected;
@@ -2001,7 +2000,8 @@ var LavalinkNode = class {
       player.playing = true;
       player.paused = false;
     }
-    if (this.NodeManager.LavalinkManager.options?.emitNewSongsOnly === true && player.queue.previous[0]?.info?.identifier === track?.info?.identifier) {
+    const previousTrack0 = await player.queue.getPreviousTrack(0);
+    if (this.NodeManager.LavalinkManager.options?.emitNewSongsOnly === true && previousTrack0?.info?.identifier === track?.info?.identifier) {
       if (this.NodeManager.LavalinkManager.options?.advancedOptions?.enableDebugEvents) {
         this.NodeManager.LavalinkManager.emit("debug", "TrackStartNewSongsOnly" /* TrackStartNewSongsOnly */, {
           state: "log",
@@ -2044,7 +2044,7 @@ var LavalinkNode = class {
       this.NodeManager.LavalinkManager.emit("trackEnd", player, trackToUse, payload);
       return;
     }
-    if (!player.queue.tracks.length && (player.repeatMode === "off" || player.get("internal_stopPlaying"))) return this.queueEnd(player, track, payload);
+    if (!await player.queue.getTrackCount() && (player.repeatMode === "off" || player.get("internal_stopPlaying"))) return this.queueEnd(player, track, payload);
     if (["loadFailed", "cleanup"].includes(payload.reason)) {
       if (player.get("internal_destroystatus") === true) return;
       await queueTrackEnd(player);
@@ -2057,8 +2057,7 @@ var LavalinkNode = class {
     }
     if (player.repeatMode !== "track" || player.get("internal_skipped")) await queueTrackEnd(player);
     else if (trackToUse && !trackToUse?.pluginInfo?.clientData?.previousTrack) {
-      player.queue.previous.unshift(trackToUse);
-      if (player.queue.previous.length > player.queue.options.maxPreviousTracks) player.queue.previous.splice(player.queue.options.maxPreviousTracks, player.queue.previous.length);
+      await player.queue.addToPrevious(trackToUse);
       await player.queue.utils.save();
     }
     if (!player.queue.current) return this.queueEnd(player, trackToUse, payload);
@@ -2087,7 +2086,7 @@ var LavalinkNode = class {
       }
     }
     this.NodeManager.LavalinkManager.emit("trackStuck", player, track || this.getTrackOfPayload(payload), payload);
-    if (!player.queue.tracks.length && (player.repeatMode === "off" || player.get("internal_stopPlaying"))) {
+    if (!await player.queue.getTrackCount() && (player.repeatMode === "off" || player.get("internal_stopPlaying"))) {
       try {
         await player.node.updatePlayer({ guildId: player.guildId, playerOptions: { track: { encoded: null } } });
         return;
@@ -2247,7 +2246,7 @@ var LavalinkNode = class {
       if (!duration || duration > this.NodeManager.LavalinkManager.options.playerOptions.minAutoPlayMs || !!player.get("internal_skipped")) {
         await this.NodeManager.LavalinkManager.options?.playerOptions?.onEmptyQueue?.autoPlayFunction(player, track);
         player.set("internal_previousautoplay", Date.now());
-        if (player.queue.tracks.length > 0) await queueTrackEnd(player);
+        if (await player.queue.getTrackCount() > 0) await queueTrackEnd(player);
         else if (this.NodeManager.LavalinkManager.options?.advancedOptions?.enableDebugEvents) {
           this.NodeManager.LavalinkManager.emit("debug", "AutoplayNoSongsAdded" /* AutoplayNoSongsAdded */, {
             state: "warn",
@@ -2272,8 +2271,7 @@ var LavalinkNode = class {
     player.set("internal_skipped", false);
     player.set("internal_autoplayStopPlaying", void 0);
     if (track && !track?.pluginInfo?.clientData?.previousTrack) {
-      player.queue.previous.unshift(track);
-      if (player.queue.previous.length > player.queue.options.maxPreviousTracks) player.queue.previous.splice(player.queue.options.maxPreviousTracks, player.queue.previous.length);
+      await player.queue.addToPrevious(track);
       await player.queue.utils.save();
     }
     if (payload?.reason !== "stopped") {
@@ -3395,6 +3393,11 @@ var FilterManager = class {
   }
 };
 
+// src/structures/Types/Queue.ts
+function isTargetedStore(store) {
+  return "supportsTargetedOps" in store && store.supportsTargetedOps === true;
+}
+
 // src/structures/Queue.ts
 var QueueSaver = class {
   /**
@@ -3410,6 +3413,10 @@ var QueueSaver = class {
     this.options = {
       maxPreviousTracks: options?.maxPreviousTracks || 25
     };
+  }
+  /** Expose the underlying store manager */
+  get store() {
+    return this._;
   }
   /**
    * Get the queue for a guild
@@ -3511,14 +3518,13 @@ var DefaultQueueStore = class {
   */
 };
 var Queue = class {
-  tracks = [];
-  previous = [];
   current = null;
   options = { maxPreviousTracks: 25 };
   guildId = "";
   QueueSaver = null;
   managerUtils = new ManagerUtils();
   queueChanges;
+  targeted = null;
   /**
    * Check if a track is valid (has proper duration and is not too short)
    * @param track The track to validate
@@ -3546,9 +3552,213 @@ var Queue = class {
     this.QueueSaver = QueueSaver2;
     this.options.maxPreviousTracks = this.QueueSaver?.options?.maxPreviousTracks ?? this.options.maxPreviousTracks;
     this.current = this.managerUtils.isTrack(data.current) ? data.current : null;
-    this.previous = Array.isArray(data.previous) && data.previous.some((track) => this.managerUtils.isTrack(track) || this.managerUtils.isUnresolvedTrack(track)) ? data.previous.filter((track) => this.managerUtils.isTrack(track) || this.managerUtils.isUnresolvedTrack(track)) : [];
-    this.tracks = Array.isArray(data.tracks) && data.tracks.some((track) => this.managerUtils.isTrack(track) || this.managerUtils.isUnresolvedTrack(track)) ? data.tracks.filter((track) => this.managerUtils.isTrack(track) || this.managerUtils.isUnresolvedTrack(track)) : [];
+    const store = this.QueueSaver?.store;
+    if (store && isTargetedStore(store)) this.targeted = store;
     Object.defineProperty(this, QueueSymbol, { configurable: true, value: true });
+  }
+  /** Load the full queue state from Redis, with current from memory */
+  async _load() {
+    if (this.targeted) {
+      const stored = await this.targeted.loadFull(this.guildId);
+      stored.current = this.current;
+      return stored;
+    }
+    const data = await this.QueueSaver.get(this.guildId);
+    return {
+      current: this.current,
+      previous: Array.isArray(data?.previous) ? data.previous : [],
+      tracks: Array.isArray(data?.tracks) ? data.tracks : []
+    };
+  }
+  /** Save the full queue state to Redis, enforcing maxPreviousTracks */
+  async _save(stored) {
+    if (stored.previous.length > this.options.maxPreviousTracks) {
+      stored.previous.splice(this.options.maxPreviousTracks, stored.previous.length);
+    }
+    if (this.targeted) {
+      await this.targeted.saveFull(this.guildId, stored, this.options.maxPreviousTracks);
+      return;
+    }
+    await this.QueueSaver.set(this.guildId, stored);
+  }
+  /** Empty snapshot for watcher callbacks (watcher only uses guildId) */
+  _emptySnapshot() {
+    return { current: null, previous: [], tracks: [] };
+  }
+  /** Find track index by matching fields server-side via Lua */
+  async _findMatchingTrackIndex(track) {
+    if (!this.targeted) return -1;
+    return this.targeted.findTrackIndex(this.guildId, track);
+  }
+  /** Create a shallow copy of a StoredQueue for change watcher snapshots */
+  _snapshot(stored) {
+    return {
+      current: stored.current ? { ...stored.current } : null,
+      previous: [...stored.previous],
+      tracks: [...stored.tracks]
+    };
+  }
+  /** Get all tracks from Redis */
+  async getTracks() {
+    if (this.targeted) return this.targeted.getAllTracks(this.guildId);
+    const stored = await this._load();
+    return stored.tracks;
+  }
+  /** Get the number of tracks in the queue */
+  async getTrackCount() {
+    if (this.targeted) return this.targeted.getTracksCount(this.guildId);
+    const stored = await this._load();
+    return stored.tracks.length;
+  }
+  /** Get a track at a specific index */
+  async getTrack(index) {
+    if (this.targeted) return this.targeted.getTrackAt(this.guildId, index) ?? void 0;
+    const stored = await this._load();
+    return stored.tracks[index];
+  }
+  /** Get a slice of tracks */
+  async getTracksSlice(start, end) {
+    if (this.targeted) return this.targeted.getTracksRange(this.guildId, start, end ?? -1);
+    const stored = await this._load();
+    return stored.tracks.slice(start, end);
+  }
+  /** Get all previous tracks from Redis */
+  async getPrevious() {
+    if (this.targeted) return this.targeted.getAllPrevious(this.guildId);
+    const stored = await this._load();
+    return stored.previous;
+  }
+  /** Get a previous track at a specific index */
+  async getPreviousTrack(index) {
+    if (this.targeted) return this.targeted.getPreviousAt(this.guildId, index) ?? void 0;
+    const stored = await this._load();
+    return stored.previous[index];
+  }
+  /** Get the number of previous tracks */
+  async getPreviousCount() {
+    if (this.targeted) return this.targeted.getPreviousCount(this.guildId);
+    const stored = await this._load();
+    return stored.previous.length;
+  }
+  /** Clear all tracks from the queue */
+  async clearTracks() {
+    if (this.targeted) {
+      await this.targeted.clearTracks(this.guildId);
+      return;
+    }
+    const stored = await this._load();
+    stored.tracks = [];
+    await this._save(stored);
+  }
+  /** Add a track to the beginning of the queue */
+  async unshiftTrack(track) {
+    if (this.targeted) return this.targeted.unshiftTrack(this.guildId, track);
+    const stored = await this._load();
+    stored.tracks.unshift(track);
+    await this._save(stored);
+    return stored.tracks.length;
+  }
+  /** Remove and return the first track from the queue */
+  async shiftTrack() {
+    if (this.targeted) return this.targeted.shiftTrack(this.guildId) ?? void 0;
+    const stored = await this._load();
+    const shifted = stored.tracks.shift();
+    if (shifted) await this._save(stored);
+    return shifted;
+  }
+  /** Add a track to the end of the queue */
+  async pushTrack(track) {
+    if (this.targeted) return this.targeted.pushTrack(this.guildId, track);
+    const stored = await this._load();
+    stored.tracks.push(track);
+    await this._save(stored);
+    return stored.tracks.length;
+  }
+  /** Replace all tracks in the queue */
+  async setTracks(tracks) {
+    if (this.targeted) {
+      await this.targeted.replaceTracks(this.guildId, tracks);
+      return;
+    }
+    const stored = await this._load();
+    stored.tracks = tracks;
+    await this._save(stored);
+  }
+  /** Move a track from one position to another */
+  async moveTrack(from, to) {
+    if (this.targeted) {
+      await this.targeted.moveTrack(this.guildId, from, to);
+      return;
+    }
+    const stored = await this._load();
+    if (from < 0 || from >= stored.tracks.length) return;
+    const [moved] = stored.tracks.splice(from, 1);
+    if (moved) stored.tracks.splice(to, 0, moved);
+    await this._save(stored);
+  }
+  /** Find the index of a track matching a predicate */
+  async findTrackIndex(predicate) {
+    if (this.targeted) {
+      const batchSize = 100;
+      let offset = 0;
+      while (true) {
+        const batch = await this.targeted.getTracksRange(this.guildId, offset, offset + batchSize);
+        if (!batch.length) return -1;
+        for (let i = 0; i < batch.length; i++) {
+          if (predicate(batch[i])) return offset + i;
+        }
+        if (batch.length < batchSize) return -1;
+        offset += batchSize;
+      }
+    }
+    const stored = await this._load();
+    return stored.tracks.findIndex(predicate);
+  }
+  /** Add a track to the beginning of the previous tracks array */
+  async addToPrevious(track) {
+    if (this.targeted) {
+      await this.targeted.addToPrevious(this.guildId, track, this.options.maxPreviousTracks);
+      return;
+    }
+    const stored = await this._load();
+    stored.previous.unshift(track);
+    await this._save(stored);
+  }
+  /** Replace a track at a specific index */
+  async replaceTrack(index, track) {
+    if (this.targeted) {
+      const count = await this.targeted.getTracksCount(this.guildId);
+      if (index < 0 || index >= count) return false;
+      await this.targeted.setTrackAt(this.guildId, index, track);
+      return true;
+    }
+    const stored = await this._load();
+    if (index < 0 || index >= stored.tracks.length) return false;
+    stored.tracks[index] = track;
+    await this._save(stored);
+    return true;
+  }
+  /** Swap two tracks in the queue */
+  async swapTracks(i, j) {
+    if (this.targeted) {
+      const count = await this.targeted.getTracksCount(this.guildId);
+      if (i < 0 || i >= count || j < 0 || j >= count) return false;
+      const [trackI, trackJ] = await Promise.all([
+        this.targeted.getTrackAt(this.guildId, i),
+        this.targeted.getTrackAt(this.guildId, j)
+      ]);
+      if (!trackI || !trackJ) return false;
+      await Promise.all([
+        this.targeted.setTrackAt(this.guildId, i, trackJ),
+        this.targeted.setTrackAt(this.guildId, j, trackI)
+      ]);
+      return true;
+    }
+    const stored = await this._load();
+    if (i < 0 || i >= stored.tracks.length || j < 0 || j >= stored.tracks.length) return false;
+    [stored.tracks[i], stored.tracks[j]] = [stored.tracks[j], stored.tracks[i]];
+    await this._save(stored);
+    return true;
   }
   /**
    * Utils for a Queue
@@ -3558,8 +3768,12 @@ var Queue = class {
      * Save the current cached Queue on the database/server (overides the server)
      */
     save: async () => {
-      if (this.previous.length > this.options.maxPreviousTracks) this.previous.splice(this.options.maxPreviousTracks, this.previous.length);
-      return await this.QueueSaver.set(this.guildId, this.utils.toJSON());
+      if (this.targeted) {
+        await this.targeted.setCurrent(this.guildId, this.current);
+        return;
+      }
+      const stored = await this._load();
+      await this._save(stored);
     },
     /**
      * Sync the current queue database/server with the cached one
@@ -3569,31 +3783,39 @@ var Queue = class {
       const data = await this.QueueSaver.get(this.guildId);
       if (!data) throw new Error(`No data found to sync for guildId: ${this.guildId}`);
       if (!dontSyncCurrent && !this.current && this.managerUtils.isTrack(data.current)) this.current = data.current;
-      if (Array.isArray(data.tracks) && data?.tracks.length && data.tracks.some((track) => this.managerUtils.isTrack(track) || this.managerUtils.isUnresolvedTrack(track))) this.tracks.splice(override ? 0 : this.tracks.length, override ? this.tracks.length : 0, ...data.tracks.filter((track) => this.managerUtils.isTrack(track) || this.managerUtils.isUnresolvedTrack(track)));
-      if (Array.isArray(data.previous) && data?.previous.length && data.previous.some((track) => this.managerUtils.isTrack(track) || this.managerUtils.isUnresolvedTrack(track))) this.previous.splice(0, override ? this.tracks.length : 0, ...data.previous.filter((track) => this.managerUtils.isTrack(track) || this.managerUtils.isUnresolvedTrack(track)));
-      await this.utils.save();
-      return;
     },
     destroy: async () => {
+      if (this.targeted) {
+        await this.targeted.deleteAll(this.guildId);
+        return;
+      }
       return await this.QueueSaver.delete(this.guildId);
     },
     /**
-     * @returns {{current:Track|null, previous:Track[], tracks:Track[]}}The Queue, but in a raw State, which allows easier handling for the QueueStoreManager
+     * @returns The Queue, but in a raw State, which allows easier handling for the QueueStoreManager
+     * NOTE: This is now async since tracks/previous are loaded from Redis
      */
-    toJSON: () => {
-      if (this.previous.length > this.options.maxPreviousTracks) this.previous.splice(this.options.maxPreviousTracks, this.previous.length);
+    toJSON: async () => {
+      const stored = await this._load();
+      if (stored.previous.length > this.options.maxPreviousTracks) stored.previous.splice(this.options.maxPreviousTracks, stored.previous.length);
       return {
-        current: this.current ? { ...this.current } : null,
-        previous: this.previous ? [...this.previous] : [],
-        tracks: this.tracks ? [...this.tracks] : []
+        current: stored.current ? { ...stored.current } : null,
+        previous: [...stored.previous],
+        tracks: [...stored.tracks]
       };
     },
     /**
      * Get the Total Duration of the Queue-Songs summed up
-     * @returns {number}
+     * NOTE: This is now async since tracks are loaded from Redis
+     * @returns {Promise<number>}
      */
-    totalDuration: () => {
-      return this.tracks.reduce((acc, cur) => acc + (cur.info.duration || 0), this.current?.info.duration || 0);
+    totalDuration: async () => {
+      if (this.targeted) {
+        const tracksDuration = await this.targeted.totalTracksDuration(this.guildId);
+        return tracksDuration + (this.current?.info?.duration || 0);
+      }
+      const stored = await this._load();
+      return stored.tracks.reduce((acc, cur) => acc + (cur.info?.duration || 0), this.current?.info?.duration || 0);
     }
   };
   /**
@@ -3601,19 +3823,28 @@ var Queue = class {
    * @returns Amount of Tracks in the Queue
    */
   async shuffle() {
-    const oldStored = typeof this.queueChanges?.shuffled === "function" ? this.utils.toJSON() : null;
-    if (this.tracks.length <= 1) return this.tracks.length;
-    if (this.tracks.length === 2) {
-      [this.tracks[0], this.tracks[1]] = [this.tracks[1], this.tracks[0]];
+    if (this.targeted) {
+      const empty = this._emptySnapshot();
+      if (typeof this.queueChanges?.shuffled === "function") try {
+        this.queueChanges.shuffled(this.guildId, empty, empty);
+      } catch {
+      }
+      return this.targeted.shuffleTracks(this.guildId);
+    }
+    const stored = await this._load();
+    const oldStored = typeof this.queueChanges?.shuffled === "function" ? this._snapshot(stored) : null;
+    if (stored.tracks.length <= 1) return stored.tracks.length;
+    if (stored.tracks.length === 2) {
+      [stored.tracks[0], stored.tracks[1]] = [stored.tracks[1], stored.tracks[0]];
     } else {
-      for (let i = this.tracks.length - 1; i > 0; i--) {
+      for (let i = stored.tracks.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
-        [this.tracks[i], this.tracks[j]] = [this.tracks[j], this.tracks[i]];
+        [stored.tracks[i], stored.tracks[j]] = [stored.tracks[j], stored.tracks[i]];
       }
     }
-    if (typeof this.queueChanges?.shuffled === "function") this.queueChanges.shuffled(this.guildId, oldStored, this.utils.toJSON());
-    await this.utils.save();
-    return this.tracks.length;
+    if (typeof this.queueChanges?.shuffled === "function") this.queueChanges.shuffled(this.guildId, oldStored, this._snapshot(stored));
+    await this._save(stored);
+    return stored.tracks.length;
   }
   /**
    * Add a Track to the Queue, and after saved in the "db" it returns the amount of the Tracks
@@ -3623,17 +3854,45 @@ var Queue = class {
    */
   async add(TrackOrTracks, index) {
     const validTracks = (Array.isArray(TrackOrTracks) ? TrackOrTracks : [TrackOrTracks]).flat(2).filter((v) => this.managerUtils.isTrack(v) || this.managerUtils.isUnresolvedTrack(v)).filter((v) => this.isValid(v));
-    if (typeof index === "number" && index >= 0 && index < this.tracks.length) {
-      return await this.splice(index, 0, validTracks);
+    if (this.targeted) {
+      const empty = this._emptySnapshot();
+      if (typeof index === "number" && index >= 0) {
+        const count = await this.targeted.getTracksCount(this.guildId);
+        if (index < count) {
+          const newLen2 = await this.targeted.insertTracksAt(this.guildId, index, validTracks);
+          if (typeof this.queueChanges?.tracksAdd === "function") try {
+            this.queueChanges.tracksAdd(this.guildId, validTracks, index, empty, empty);
+          } catch {
+          }
+          return newLen2;
+        }
+      }
+      const newLen = await this.targeted.pushTrack(this.guildId, ...validTracks);
+      if (typeof this.queueChanges?.tracksAdd === "function") try {
+        this.queueChanges.tracksAdd(this.guildId, validTracks, newLen, empty, empty);
+      } catch {
+      }
+      return newLen;
     }
-    const oldStored = typeof this.queueChanges?.tracksAdd === "function" ? this.utils.toJSON() : null;
-    this.tracks.push(...validTracks);
+    const stored = await this._load();
+    if (typeof index === "number" && index >= 0 && index < stored.tracks.length) {
+      const oldStored2 = typeof this.queueChanges?.tracksAdd === "function" || typeof this.queueChanges?.tracksRemoved === "function" ? this._snapshot(stored) : null;
+      stored.tracks.splice(index, 0, ...validTracks);
+      if (typeof this.queueChanges?.tracksAdd === "function") try {
+        this.queueChanges.tracksAdd(this.guildId, validTracks, index, oldStored2, this._snapshot(stored));
+      } catch {
+      }
+      await this._save(stored);
+      return stored.tracks.length;
+    }
+    const oldStored = typeof this.queueChanges?.tracksAdd === "function" ? this._snapshot(stored) : null;
+    stored.tracks.push(...validTracks);
     if (typeof this.queueChanges?.tracksAdd === "function") try {
-      this.queueChanges.tracksAdd(this.guildId, validTracks, this.tracks.length, oldStored, this.utils.toJSON());
+      this.queueChanges.tracksAdd(this.guildId, validTracks, stored.tracks.length, oldStored, this._snapshot(stored));
     } catch {
     }
-    await this.utils.save();
-    return this.tracks.length;
+    await this._save(stored);
+    return stored.tracks.length;
   }
   /**
    * Splice the tracks in the Queue
@@ -3643,23 +3902,49 @@ var Queue = class {
    * @returns {Track} Spliced Track
    */
   async splice(index, amount, TrackOrTracks) {
-    const oldStored = typeof this.queueChanges?.tracksAdd === "function" || typeof this.queueChanges?.tracksRemoved === "function" ? this.utils.toJSON() : null;
-    if (!this.tracks.length) {
+    const validTracks = TrackOrTracks ? (Array.isArray(TrackOrTracks) ? TrackOrTracks : [TrackOrTracks]).flat(2).filter((v) => this.managerUtils.isTrack(v) || this.managerUtils.isUnresolvedTrack(v)).filter((v) => this.isValid(v)) : [];
+    if (this.targeted) {
+      const count = await this.targeted.getTracksCount(this.guildId);
+      if (!count) {
+        if (TrackOrTracks) return await this.add(TrackOrTracks);
+        return null;
+      }
+      const empty = this._emptySnapshot();
+      const removedRaw = await this.targeted.spliceTracks(this.guildId, index, amount, validTracks.length ? validTracks : void 0);
+      const spliced2 = removedRaw.map((r) => {
+        try {
+          return JSON.parse(r);
+        } catch {
+          return null;
+        }
+      }).filter(Boolean);
+      if (validTracks.length && typeof this.queueChanges?.tracksAdd === "function") try {
+        this.queueChanges.tracksAdd(this.guildId, validTracks, index, empty, empty);
+      } catch {
+      }
+      if (typeof this.queueChanges?.tracksRemoved === "function") try {
+        this.queueChanges.tracksRemoved(this.guildId, spliced2, index, empty, empty);
+      } catch {
+      }
+      return spliced2.length === 1 ? spliced2[0] : spliced2;
+    }
+    const stored = await this._load();
+    const oldStored = typeof this.queueChanges?.tracksAdd === "function" || typeof this.queueChanges?.tracksRemoved === "function" ? this._snapshot(stored) : null;
+    if (!stored.tracks.length) {
       if (TrackOrTracks) return await this.add(TrackOrTracks);
       return null;
     }
-    const validTracks = TrackOrTracks ? (Array.isArray(TrackOrTracks) ? TrackOrTracks : [TrackOrTracks]).flat(2).filter((v) => this.managerUtils.isTrack(v) || this.managerUtils.isUnresolvedTrack(v)).filter((v) => this.isValid(v)) : [];
     if (TrackOrTracks && typeof this.queueChanges?.tracksAdd === "function") try {
-      this.queueChanges.tracksAdd(this.guildId, validTracks, index, oldStored, this.utils.toJSON());
+      this.queueChanges.tracksAdd(this.guildId, validTracks, index, oldStored, this._snapshot(stored));
     } catch {
     }
-    let spliced = TrackOrTracks ? this.tracks.splice(index, amount, ...validTracks) : this.tracks.splice(index, amount);
+    let spliced = TrackOrTracks ? stored.tracks.splice(index, amount, ...validTracks) : stored.tracks.splice(index, amount);
     spliced = Array.isArray(spliced) ? spliced : [spliced];
     if (typeof this.queueChanges?.tracksRemoved === "function") try {
-      this.queueChanges.tracksRemoved(this.guildId, spliced, index, oldStored, this.utils.toJSON());
+      this.queueChanges.tracksRemoved(this.guildId, spliced, index, oldStored, this._snapshot(stored));
     } catch {
     }
-    await this.utils.save();
+    await this._save(stored);
     return spliced.length === 1 ? spliced[0] : spliced;
   }
   /**
@@ -3674,7 +3959,7 @@ var Queue = class {
    * ```js
    * // remove single track
    *
-   * const track = player.queue.tracks[4];
+   * const track = await player.queue.getTrack(4);
    * await player.queue.remove(track);
    *
    * // if you already have the index you can straight up pass it too
@@ -3682,7 +3967,8 @@ var Queue = class {
    *
    *
    * // if you want to remove multiple tracks, e.g. from position 4 to position 10 you can do smt like this
-   * await player.queue.remove(player.queue.tracks.slice(4, 10)) // get's the tracks from 4 - 10, which then get's found in the remove function to be removed
+   * const tracks = await player.queue.getTracksSlice(4, 10);
+   * await player.queue.remove(tracks);
    *
    * // I still highly suggest to use .splice!
    *
@@ -3694,61 +3980,143 @@ var Queue = class {
    * ```
    */
   async remove(removeQueryTrack) {
-    const oldStored = typeof this.queueChanges?.tracksRemoved === "function" ? this.utils.toJSON() : null;
-    if (typeof removeQueryTrack === "number") {
-      const toRemove2 = this.tracks[removeQueryTrack];
-      if (!toRemove2) return null;
-      const removed2 = this.tracks.splice(removeQueryTrack, 1);
+    if (this.targeted) {
+      const empty = this._emptySnapshot();
+      if (typeof removeQueryTrack === "number") {
+        const removedRaw2 = await this.targeted.removeTracksByIndices(this.guildId, [removeQueryTrack]);
+        if (!removedRaw2.length) return null;
+        const removed3 = removedRaw2.map((r) => {
+          try {
+            return JSON.parse(r);
+          } catch {
+            return null;
+          }
+        }).filter(Boolean);
+        if (!removed3.length) return null;
+        if (typeof this.queueChanges?.tracksRemoved === "function") try {
+          this.queueChanges.tracksRemoved(this.guildId, removed3, removeQueryTrack, empty, empty);
+        } catch {
+        }
+        return { removed: removed3 };
+      }
+      if (Array.isArray(removeQueryTrack)) {
+        if (removeQueryTrack.every((v) => typeof v === "number")) {
+          const indices = removeQueryTrack;
+          const removedRaw3 = await this.targeted.removeTracksByIndices(this.guildId, indices);
+          if (!removedRaw3.length) return null;
+          const removed4 = removedRaw3.map((r) => {
+            try {
+              return JSON.parse(r);
+            } catch {
+              return null;
+            }
+          }).filter(Boolean);
+          if (!removed4.length) return null;
+          if (typeof this.queueChanges?.tracksRemoved === "function") try {
+            this.queueChanges.tracksRemoved(this.guildId, removed4, indices, empty, empty);
+          } catch {
+          }
+          return { removed: removed4 };
+        }
+        const allTracks = await this.targeted.getAllTracks(this.guildId);
+        const indicesToRemove = [];
+        for (let i = 0; i < allTracks.length; i++) {
+          const v = allTracks[i];
+          if (removeQueryTrack.find(
+            (t) => typeof t === "number" && t === i || typeof t === "object" && (t.encoded && t.encoded === v.encoded || t.info?.identifier && t.info.identifier === v.info?.identifier || t.info?.uri && t.info.uri === v.info?.uri || t.info?.title && t.info.title === v.info?.title || t.info?.isrc && t.info.isrc === v.info?.isrc || t.info?.artworkUrl && t.info.artworkUrl === v.info?.artworkUrl)
+          )) {
+            indicesToRemove.push(i);
+          }
+        }
+        if (!indicesToRemove.length) return null;
+        const removedRaw2 = await this.targeted.removeTracksByIndices(this.guildId, indicesToRemove);
+        const removed3 = removedRaw2.map((r) => {
+          try {
+            return JSON.parse(r);
+          } catch {
+            return null;
+          }
+        }).filter(Boolean);
+        if (!removed3.length) return null;
+        if (typeof this.queueChanges?.tracksRemoved === "function") try {
+          this.queueChanges.tracksRemoved(this.guildId, removed3, indicesToRemove, empty, empty);
+        } catch {
+        }
+        return { removed: removed3 };
+      }
+      const idx = await this._findMatchingTrackIndex(removeQueryTrack);
+      if (idx < 0) return null;
+      const removedRaw = await this.targeted.removeTracksByIndices(this.guildId, [idx]);
+      const removed2 = removedRaw.map((r) => {
+        try {
+          return JSON.parse(r);
+        } catch {
+          return null;
+        }
+      }).filter(Boolean);
+      if (!removed2.length) return null;
       if (typeof this.queueChanges?.tracksRemoved === "function") try {
-        this.queueChanges.tracksRemoved(this.guildId, removed2, removeQueryTrack, oldStored, this.utils.toJSON());
+        this.queueChanges.tracksRemoved(this.guildId, removed2, idx, empty, empty);
       } catch {
       }
-      await this.utils.save();
+      return { removed: removed2 };
+    }
+    const stored = await this._load();
+    const oldStored = typeof this.queueChanges?.tracksRemoved === "function" ? this._snapshot(stored) : null;
+    if (typeof removeQueryTrack === "number") {
+      const toRemove2 = stored.tracks[removeQueryTrack];
+      if (!toRemove2) return null;
+      const removed2 = stored.tracks.splice(removeQueryTrack, 1);
+      if (typeof this.queueChanges?.tracksRemoved === "function") try {
+        this.queueChanges.tracksRemoved(this.guildId, removed2, removeQueryTrack, oldStored, this._snapshot(stored));
+      } catch {
+      }
+      await this._save(stored);
       return { removed: removed2 };
     }
     if (Array.isArray(removeQueryTrack)) {
       if (removeQueryTrack.every((v) => typeof v === "number")) {
         const removed3 = [];
         for (const i of removeQueryTrack) {
-          if (this.tracks[i]) {
-            removed3.push(...this.tracks.splice(i, 1));
+          if (stored.tracks[i]) {
+            removed3.push(...stored.tracks.splice(i, 1));
           }
         }
         if (!removed3.length) return null;
         if (typeof this.queueChanges?.tracksRemoved === "function") try {
-          this.queueChanges.tracksRemoved(this.guildId, removed3, removeQueryTrack, oldStored, this.utils.toJSON());
+          this.queueChanges.tracksRemoved(this.guildId, removed3, removeQueryTrack, oldStored, this._snapshot(stored));
         } catch {
         }
-        await this.utils.save();
+        await this._save(stored);
         return { removed: removed3 };
       }
-      const tracksToRemove = this.tracks.map((v, i) => ({ v, i })).filter(({ v, i }) => removeQueryTrack.find(
+      const tracksToRemove = stored.tracks.map((v, i) => ({ v, i })).filter(({ v, i }) => removeQueryTrack.find(
         (t) => typeof t === "number" && t === i || typeof t === "object" && (t.encoded && t.encoded === v.encoded || t.info?.identifier && t.info.identifier === v.info?.identifier || t.info?.uri && t.info.uri === v.info?.uri || t.info?.title && t.info.title === v.info?.title || t.info?.isrc && t.info.isrc === v.info?.isrc || t.info?.artworkUrl && t.info.artworkUrl === v.info?.artworkUrl)
       ));
       if (!tracksToRemove.length) return null;
       const removed2 = [];
       for (const { i } of tracksToRemove) {
-        if (this.tracks[i]) {
-          removed2.push(...this.tracks.splice(i, 1));
+        if (stored.tracks[i]) {
+          removed2.push(...stored.tracks.splice(i, 1));
         }
       }
       if (typeof this.queueChanges?.tracksRemoved === "function") try {
-        this.queueChanges.tracksRemoved(this.guildId, removed2, tracksToRemove.map((v) => v.i), oldStored, this.utils.toJSON());
+        this.queueChanges.tracksRemoved(this.guildId, removed2, tracksToRemove.map((v) => v.i), oldStored, this._snapshot(stored));
       } catch {
       }
-      await this.utils.save();
+      await this._save(stored);
       return { removed: removed2 };
     }
-    const toRemove = this.tracks.findIndex(
+    const toRemove = stored.tracks.findIndex(
       (v) => removeQueryTrack.encoded && removeQueryTrack.encoded === v.encoded || removeQueryTrack.info?.identifier && removeQueryTrack.info.identifier === v.info?.identifier || removeQueryTrack.info?.uri && removeQueryTrack.info.uri === v.info?.uri || removeQueryTrack.info?.title && removeQueryTrack.info.title === v.info?.title || removeQueryTrack.info?.isrc && removeQueryTrack.info.isrc === v.info?.isrc || removeQueryTrack.info?.artworkUrl && removeQueryTrack.info.artworkUrl === v.info?.artworkUrl
     );
     if (toRemove < 0) return null;
-    const removed = this.tracks.splice(toRemove, 1);
+    const removed = stored.tracks.splice(toRemove, 1);
     if (typeof this.queueChanges?.tracksRemoved === "function") try {
-      this.queueChanges.tracksRemoved(this.guildId, removed, toRemove, oldStored, this.utils.toJSON());
+      this.queueChanges.tracksRemoved(this.guildId, removed, toRemove, oldStored, this._snapshot(stored));
     } catch {
     }
-    await this.utils.save();
+    await this._save(stored);
     return { removed };
   }
   /**
@@ -3764,8 +4132,10 @@ var Queue = class {
    * ```
    */
   async shiftPrevious() {
-    const removed = this.previous.shift();
-    if (removed) await this.utils.save();
+    if (this.targeted) return this.targeted.shiftPrevious(this.guildId);
+    const stored = await this._load();
+    const removed = stored.previous.shift();
+    if (removed) await this._save(stored);
     return removed ?? null;
   }
 };
@@ -3822,7 +4192,8 @@ var Player = class {
   voice = {
     endpoint: null,
     sessionId: null,
-    token: null
+    token: null,
+    channelId: void 0
   };
   voiceState = {
     selfDeaf: false,
@@ -3933,7 +4304,7 @@ var Player = class {
           this.LavalinkManager.emit("trackError", this, this.queue.current, error);
           if (options && "clientTrack" in options) delete options.clientTrack;
           if (options && "track" in options) delete options.track;
-          if (this.LavalinkManager.options?.autoSkipOnResolveError === true && this.queue.tracks[0]) return this.play(options);
+          if (this.LavalinkManager.options?.autoSkipOnResolveError === true && await this.queue.getTrackCount() > 0) return this.play(options);
           return this;
         }
       }
@@ -3993,7 +4364,7 @@ var Player = class {
         }).filter((v) => typeof v[1] !== "undefined"))
       });
     }
-    if (!this.queue.current && this.queue.tracks.length) await queueTrackEnd(this);
+    if (!this.queue.current && await this.queue.getTrackCount() > 0) await queueTrackEnd(this);
     if (this.queue.current && this.LavalinkManager.utils.isUnresolvedTrack(this.queue.current)) {
       if (this.LavalinkManager.options?.advancedOptions?.enableDebugEvents) {
         this.LavalinkManager.emit("debug", "PlayerPlayUnresolvedTrack" /* PlayerPlayUnresolvedTrack */, {
@@ -4022,7 +4393,7 @@ var Player = class {
         if (options && "clientTrack" in options) delete options.clientTrack;
         if (options && "track" in options) delete options.track;
         await queueTrackEnd(this, true);
-        if (this.LavalinkManager.options?.autoSkipOnResolveError === true && this.queue.tracks[0]) return this.play(options);
+        if (this.LavalinkManager.options?.autoSkipOnResolveError === true && await this.queue.getTrackCount() > 0) return this.play(options);
         return this;
       }
     }
@@ -4200,7 +4571,7 @@ var Player = class {
     if (!this.queue.current.info.isSeekable || this.queue.current.info.isStream) throw new RangeError("Current Track is not seekable / a stream");
     if (position < 0 || position > this.queue.current.info.duration) position = Math.max(Math.min(position, this.queue.current.info.duration), 0);
     const oldPosition = this.lastPosition;
-    const oldStored = typeof this.queue.queueChanges?.seeked === "function" ? this.queue.utils.toJSON() : null;
+    const oldStored = typeof this.queue.queueChanges?.seeked === "function" ? await this.queue.utils.toJSON() : null;
     this.lastPositionChange = Date.now();
     this.lastPosition = position;
     const now = performance.now();
@@ -4208,7 +4579,7 @@ var Player = class {
     this.ping.lavalink = Math.round((performance.now() - now) / 10) / 100;
     if (typeof this.queue.queueChanges?.seeked === "function") {
       try {
-        this.queue.queueChanges.seeked(this.guildId, this.queue.current, oldPosition, position, this, oldStored, this.queue.utils.toJSON());
+        this.queue.queueChanges.seeked(this.guildId, this.queue.current, oldPosition, position, this, oldStored, await this.queue.utils.toJSON());
       } catch {
       }
     }
@@ -4234,9 +4605,10 @@ var Player = class {
    * @param amount provide the index of the next track to skip to
    */
   async skip(skipTo = 0, throwError = true) {
-    if (!this.queue.tracks.length && (throwError || typeof skipTo === "boolean" && skipTo === true)) throw new RangeError("Can't skip more than the queue size");
+    const trackCount = await this.queue.getTrackCount();
+    if (!trackCount && (throwError || typeof skipTo === "boolean" && skipTo === true)) throw new RangeError("Can't skip more than the queue size");
     if (typeof skipTo === "number" && skipTo > 1) {
-      if (skipTo > this.queue.tracks.length) throw new RangeError("Can't skip more than the queue size");
+      if (skipTo > trackCount) throw new RangeError("Can't skip more than the queue size");
       await this.queue.splice(0, skipTo - 1);
     }
     if (!this.playing && !this.queue.current) return this.play(), this;
@@ -4252,7 +4624,7 @@ var Player = class {
    */
   async stopPlaying(clearQueue = true, executeAutoplay = false) {
     this.set("internal_stopPlaying", true);
-    if (this.queue.tracks.length && clearQueue === true) await this.queue.splice(0, this.queue.tracks.length);
+    if (clearQueue === true) await this.queue.clearTracks();
     if (executeAutoplay === false) this.set("internal_autoplayStopPlaying", true);
     else this.set("internal_autoplayStopPlaying", void 0);
     const now = performance.now();
@@ -4444,8 +4816,9 @@ var Player = class {
         }
       };
       if (!isDefaultSource()) throw new RangeError(`defaultSearchPlatform "${this.LavalinkManager.options.playerOptions.defaultSearchPlatform}" is not supported by the newNode`);
-      if (this.queue.current || this.queue.tracks.length) {
-        const trackSources = new Set([this.queue.current, ...this.queue.tracks].map((track) => track.info.sourceName));
+      const queueTracks = await this.queue.getTracks();
+      if (this.queue.current || queueTracks.length) {
+        const trackSources = new Set([this.queue.current, ...queueTracks].map((track) => track.info.sourceName));
         const missingSources = [...trackSources].filter(
           (source) => !updateNode.info.sourceManagers.includes(source)
         );
@@ -4460,7 +4833,7 @@ var Player = class {
         functionLayer: "Player > changeNode()"
       });
     }
-    const data = this.toJSON();
+    const data = await this.toJSON();
     const currentTrack = this.queue.current;
     if (!this.voice.endpoint || !this.voice.sessionId || !this.voice.token)
       throw new Error("Voice Data is missing, can't change the node");
@@ -4510,7 +4883,8 @@ var Player = class {
           voice: {
             token: this.voice.token,
             endpoint: this.voice.endpoint,
-            sessionId: this.voice.sessionId
+            sessionId: this.voice.sessionId,
+            channelId: this.voice.channelId
           }
         }
       });
@@ -4552,7 +4926,7 @@ var Player = class {
     }
   }
   /** Converts the Player including Queue to a Json state */
-  toJSON() {
+  async toJSON() {
     return {
       guildId: this.guildId,
       options: this.options,
@@ -4572,7 +4946,7 @@ var Player = class {
       nodeId: this.node?.id,
       nodeSessionId: this.node?.sessionId,
       ping: this.ping,
-      queue: this.queue.utils.toJSON()
+      queue: await this.queue.utils.toJSON()
     };
   }
 };
@@ -5042,7 +5416,8 @@ var LavalinkManager = class extends EventEmitter2 {
               voice: {
                 token: update.token,
                 endpoint: update.endpoint,
-                sessionId: sessionId2Use
+                sessionId: sessionId2Use,
+                channelId: update.channel_id || player.voice.channelId
               }
             }
           });
@@ -5074,6 +5449,7 @@ var LavalinkManager = class extends EventEmitter2 {
       if (update.channel_id) {
         if (player.voiceChannelId !== update.channel_id) this.emit("playerMove", player, player.voiceChannelId, update.channel_id);
         player.voice.sessionId = update.session_id || player.voice.sessionId;
+        player.voice.channelId = update.channel_id || player.voice.channelId;
         if (!player.voice.sessionId) {
           if (this.options?.advancedOptions?.enableDebugEvents) {
             this.emit("debug", "NoAudioDebug" /* NoAudioDebug */, {
@@ -5085,6 +5461,7 @@ var LavalinkManager = class extends EventEmitter2 {
           if (this.options?.advancedOptions?.debugOptions?.noAudio === true) console.debug(`Lavalink-Client-Debug | NO-AUDIO [::] sendRawData function, Function to assing sessionId provided, but no found in Payload: ${safeStringify(update, 2)}`);
         }
         player.voiceChannelId = update.channel_id;
+        player.options.voiceChannelId = update.channel_id;
         const selfMuteChanged = typeof update.self_mute === "boolean" && player.voiceState.selfMute !== update.self_mute;
         const serverMuteChanged = typeof update.mute === "boolean" && player.voiceState.serverMute !== update.mute;
         const selfDeafChanged = typeof update.self_deaf === "boolean" && player.voiceState.selfDeaf !== update.self_deaf;
@@ -5118,13 +5495,13 @@ var LavalinkManager = class extends EventEmitter2 {
                 functionLayer: "LavalinkManager > sendRawData()"
               });
             }
-            if (!autoReconnectOnlyWithTracks || autoReconnectOnlyWithTracks && (player.queue.current || player.queue.tracks.length)) {
+            if (!autoReconnectOnlyWithTracks || autoReconnectOnlyWithTracks && (player.queue.current || await player.queue.getTrackCount())) {
               await player.connect();
             }
             if (player.queue.current) {
               return void await player.play({ position: previousPosition, paused: previousPaused, clientTrack: player.queue.current });
             }
-            if (player.queue.tracks.length) {
+            if (await player.queue.getTrackCount()) {
               return void await player.play({ paused: previousPaused });
             }
             this.emit("debug", "PlayerAutoReconnect" /* PlayerAutoReconnect */, {
@@ -5168,6 +5545,7 @@ export {
   TrackSymbol,
   UnresolvedTrackSymbol,
   audioOutputsData,
+  isTargetedStore,
   parseLavalinkConnUrl,
   queueTrackEnd,
   safeStringify,

@@ -493,8 +493,7 @@ export class MiniMap<K, V> extends Map<K, V> {
 
 export async function queueTrackEnd(player: Player, dontShiftQueue: boolean = false) {
     if (player.queue.current && !player.queue.current?.pluginInfo?.clientData?.previousTrack) { // If there was a current Track already and repeatmode === true, add it to the queue.
-        player.queue.previous.unshift(player.queue.current);
-        if (player.queue.previous.length > player.queue.options.maxPreviousTracks) player.queue.previous.splice(player.queue.options.maxPreviousTracks, player.queue.previous.length);
+        await player.queue.addToPrevious(player.queue.current);
         await player.queue.utils.save();
     }
 
@@ -503,11 +502,11 @@ export async function queueTrackEnd(player: Player, dontShiftQueue: boolean = fa
         // Only add back if the track has valid duration (more than 10 seconds)
         const duration = player.queue.current.info?.duration;
         if (duration && !isNaN(duration) && duration >= 10000) {
-            player.queue.tracks.push(player.queue.current);
+            await player.queue.pushTrack(player.queue.current);
         }
     }
     // change the current Track to the next upcoming one
-    const nextSong = dontShiftQueue ? null : player.queue.tracks.shift() as Track;
+    const nextSong = dontShiftQueue ? null : await player.queue.shiftTrack() as Track;
 
     try {
         if (nextSong && player.LavalinkManager.utils.isUnresolvedTrack(nextSong)) await (nextSong as UnresolvedTrack).resolve(player);
@@ -528,7 +527,7 @@ export async function queueTrackEnd(player: Player, dontShiftQueue: boolean = fa
         player.LavalinkManager.emit("trackError", player, player.queue.current, error);
 
         // try to play the next track if possible
-        if (!dontShiftQueue && player.LavalinkManager.options?.autoSkipOnResolveError === true && player.queue.tracks[0]) return queueTrackEnd(player);
+        if (!dontShiftQueue && player.LavalinkManager.options?.autoSkipOnResolveError === true && (await player.queue.getTrackCount()) > 0) return queueTrackEnd(player);
     }
 
     // return the new current Track

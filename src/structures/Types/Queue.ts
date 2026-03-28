@@ -30,6 +30,54 @@ export interface ManagerQueueOptions<CustomPlayerT extends Player = Player> {
     queueChangesWatcher?: QueueChangesWatcher;
 }
 
+export interface TargetedQueueStoreManager extends QueueStoreManager {
+    readonly supportsTargetedOps: true;
+
+    // Current track
+    getCurrent(guildId: string): Awaitable<Track | null>;
+    setCurrent(guildId: string, track: Track | null): Awaitable<void>;
+
+    // Tracks list
+    getTracksCount(guildId: string): Awaitable<number>;
+    getTrackAt(guildId: string, index: number): Awaitable<Track | UnresolvedTrack | null>;
+    getTracksRange(guildId: string, start: number, end: number): Awaitable<(Track | UnresolvedTrack)[]>;
+    getAllTracks(guildId: string): Awaitable<(Track | UnresolvedTrack)[]>;
+    pushTrack(guildId: string, ...tracks: (Track | UnresolvedTrack)[]): Awaitable<number>;
+    unshiftTrack(guildId: string, ...tracks: (Track | UnresolvedTrack)[]): Awaitable<number>;
+    shiftTrack(guildId: string): Awaitable<Track | UnresolvedTrack | null>;
+    setTrackAt(guildId: string, index: number, track: Track | UnresolvedTrack): Awaitable<void>;
+    clearTracks(guildId: string): Awaitable<void>;
+    replaceTracks(guildId: string, tracks: (Track | UnresolvedTrack)[]): Awaitable<void>;
+
+    // Previous list
+    getPreviousCount(guildId: string): Awaitable<number>;
+    getPreviousAt(guildId: string, index: number): Awaitable<Track | null>;
+    getAllPrevious(guildId: string): Awaitable<Track[]>;
+    addToPrevious(guildId: string, track: Track, maxSize: number): Awaitable<void>;
+    shiftPrevious(guildId: string): Awaitable<Track | null>;
+    clearPrevious(guildId: string): Awaitable<void>;
+
+    // Eval-accelerated bulk operations
+    shuffleTracks(guildId: string): Awaitable<number>;
+    insertTracksAt(guildId: string, index: number, tracks: (Track | UnresolvedTrack)[]): Awaitable<number>;
+    spliceTracks(guildId: string, index: number, deleteCount: number, tracks?: (Track | UnresolvedTrack)[]): Awaitable<string[]>;
+    removeTracksByIndices(guildId: string, indices: number[]): Awaitable<string[]>;
+    moveTrack(guildId: string, from: number, to: number): Awaitable<void>;
+    findTrackIndex(guildId: string, track: Track | UnresolvedTrack): Awaitable<number>;
+    totalTracksDuration(guildId: string): Awaitable<number>;
+
+    // Full load/save for complex ops
+    loadFull(guildId: string): Awaitable<StoredQueue>;
+    saveFull(guildId: string, stored: StoredQueue, maxPreviousTracks: number): Awaitable<void>;
+
+    // Lifecycle
+    deleteAll(guildId: string): Awaitable<void>;
+}
+
+export function isTargetedStore(store: QueueStoreManager): store is TargetedQueueStoreManager {
+    return 'supportsTargetedOps' in store && (store as any).supportsTargetedOps === true;
+}
+
 export interface QueueChangesWatcher {
     /** get a Value (MUST RETURN UNPARSED!) */
     tracksAdd: (guildId: string, tracks: (Track | UnresolvedTrack)[], position: number, oldStoredQueue: StoredQueue, newStoredQueue: StoredQueue) => void;
