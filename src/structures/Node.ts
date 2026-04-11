@@ -2,6 +2,7 @@ import { isAbsolute } from "path";
 import WebSocket from "ws";
 
 import { DebugEvents, DestroyReasons, validSponsorBlocks } from "./Constants";
+import { ReconnectionState } from "./Types/Node";
 import { NodeSymbol, queueTrackEnd, safeStringify } from "./Utils";
 
 import type {
@@ -64,12 +65,14 @@ export class LavalinkNode {
     public resuming: { enabled: boolean, timeout: number | null } = { enabled: true, timeout: null };
     /** Actual Lavalink Information of the Node */
     public info: LavalinkInfo | null = null;
+    /** current state of the Reconnections */
+    public reconnectionState: ReconnectionState = ReconnectionState.IDLE;
     /** The Node Manager of this Node */
     private NodeManager: NodeManager | null = null;
     /** The Reconnection Timeout */
     private reconnectTimeout?: NodeJS.Timeout = undefined;
-    /** The Reconnection Attempt counter */
-    private reconnectAttempts = 1;
+    /** The Reconnection Attempt counter (array of datetimes when it tried it.) */
+    private reconnectAttempts: number[] = [];
     /** The Socket of the Lavalink */
     private socket: WebSocket | null = null;
     /** Version of what the Lavalink Server should be */
@@ -95,6 +98,7 @@ export class LavalinkNode {
             secure: false,
             retryAmount: 5,
             retryDelay: 10e3,
+            retryTimespan: -1,
             requestSignalTimeoutMS: 30000,
             heartBeatInterval: -1,
             closeOnError: true,
@@ -431,6 +435,8 @@ export class LavalinkNode {
             });
         }
 
+        this.resetAckTimeouts(false, true);
+
         if (this.pingTimeout) clearTimeout(this.pingTimeout);
         this.pingTimeout = setTimeout(() => {
             this.pingTimeout = null;
@@ -451,6 +457,8 @@ export class LavalinkNode {
                     functionLayer: "LavalinkNode > nodeEvent > stats > heartBeat() > timeoutHit",
                 });
             }
+            this.isAlive = false;
+            this.socket.terminate();
         }, 65_000); // the stats endpoint get's sent every 60s. se wee add a 5s buffer to make sure we don't miss any stats message
     }
     /**
@@ -485,6 +493,7 @@ export class LavalinkNode {
      */
     public destroy(destroyReason?: DestroyReasonsType, deleteNode: boolean = true, movePlayers: boolean = false): void {
         // if (!this.connected) return; This Prevents the node from being destroyed if it is not connected, but we want to allow it to be destroyed even if not connected.
+        this.reconnectionState = ReconnectionState.IDLE;
 
         const players = this.NodeManager.LavalinkManager.players.filter(p => p.node.id === this.id);
         if (players.size) {
@@ -533,33 +542,29 @@ export class LavalinkNode {
 
             // Handle all player operations first, then clean up the socket
             handlePlayerOperations().finally(() => {
-                this.socket.close(1000, "Node-Destroy");
-                this.socket.removeAllListeners();
+                this.socket?.close(1000, "Node-Destroy");
+                this.socket?.removeAllListeners();
                 this.socket = null;
-                this.reconnectAttempts = 1;
-                clearTimeout(this.reconnectTimeout);
+                this.resetReconnectionAttempts();
 
                 if (deleteNode) {
                     this.NodeManager.emit("destroy", this, destroyReason);
                     this.NodeManager.nodes.delete(this.id);
-                    clearInterval(this.heartBeatInterval);
-                    clearTimeout(this.pingTimeout);
+                    this.resetAckTimeouts(true, true);
                 } else {
                     this.NodeManager.emit("disconnect", this, { code: 1000, reason: destroyReason });
                 }
             });
         } else { // If no players, proceed with socket cleanup immediately
-            this.socket.close(1000, "Node-Destroy");
-            this.socket.removeAllListeners();
+            this.socket?.close(1000, "Node-Destroy");
+            this.socket?.removeAllListeners();
             this.socket = null;
-            this.reconnectAttempts = 1;
-            clearTimeout(this.reconnectTimeout);
+            this.resetReconnectionAttempts();
 
             if (deleteNode) {
                 this.NodeManager.emit("destroy", this, destroyReason);
                 this.NodeManager.nodes.delete(this.id);
-                clearInterval(this.heartBeatInterval);
-                clearTimeout(this.pingTimeout);
+                this.resetAckTimeouts(true, true);
             } else {
                 this.NodeManager.emit("disconnect", this, { code: 1000, reason: destroyReason });
             }
@@ -582,12 +587,12 @@ export class LavalinkNode {
     public disconnect(disconnectReason?: DisconnectReasonsType) {
         if (!this.connected) return
 
-        this.socket.close(1000, "Node-Disconnect");
-        this.socket.removeAllListeners();
+        this.socket?.close(1000, "Node-Disconnect");
+        this.socket?.removeAllListeners();
         this.socket = null;
+        this.reconnectionState = ReconnectionState.IDLE;
 
-        this.reconnectAttempts = 1;
-        clearTimeout(this.reconnectTimeout);
+        this.resetReconnectionAttempts();
 
         this.NodeManager.emit("disconnect", this, { code: 1000, reason: disconnectReason });
     }
@@ -1029,50 +1034,110 @@ export class LavalinkNode {
     }
 
     /**
+     * If already trying to reconnect or pending, return
+     */
+    public get isNodeReconnecting(): boolean {
+        return this.reconnectionState !== ReconnectionState.IDLE;
+    }
+
+    /**
      * Reconnect to the lavalink node
-     * @param instaReconnect @default false wether to instantly try to reconnect
+     * @param force @default false Wether to instantly try to reconnect (force it)
      * @returns void
      *
      * @example
      * ```ts
-     * await player.node.reconnect();
+     * await player.node.reconnect(true); //true forcefully trys the reconnect
      * ```
      */
-    private reconnect(instaReconnect = false): void {
-        this.NodeManager.emit("reconnectinprogress", this);
-        const resumeSessionId = this.resuming.enabled ? this.sessionId : undefined;
-        if (instaReconnect) {
-            if (this.reconnectAttempts >= this.options.retryAmount) {
-                const error = new Error(`Unable to connect after ${this.options.retryAmount} attempts.`)
-
-                this.NodeManager.emit("error", this, error);
-                return this.destroy(DestroyReasons.NodeReconnectFail);
-            }
-            this.socket.removeAllListeners();
-            this.socket = null;
-            this.NodeManager.emit("reconnecting", this);
-            this.connect(resumeSessionId);
-            this.reconnectAttempts++;
+    private reconnect(force = false): void {
+        // If already trying to reconnect or pending, return
+        if (this.isNodeReconnecting) {
             return;
         }
+
+        // Set reconnection state to pending
+        this.reconnectionState = ReconnectionState.PENDING;
+        this.NodeManager.emit("reconnectinprogress", this);
+
+        if (force) {
+            this.executeReconnect();
+            return;
+        }
+
+        if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
         this.reconnectTimeout = setTimeout(() => {
             this.reconnectTimeout = null;
-            if (this.reconnectAttempts >= this.options.retryAmount) {
-                const error = new Error(`Unable to connect after ${this.options.retryAmount} attempts.`)
-                this.NodeManager.emit("error", this, error);
-                return this.destroy(DestroyReasons.NodeReconnectFail);
-            }
-            this.socket.removeAllListeners();
-            this.socket = null;
-            this.NodeManager.emit("reconnecting", this);
-            this.connect(resumeSessionId);
-            this.reconnectAttempts++;
+            this.executeReconnect();
         }, this.options.retryDelay || 1000);
+    }
+
+    public get reconnectionAttemptCount(): number {
+        const maxAllowedTimestan = this.options.retryTimespan || -1;
+        if (maxAllowedTimestan <= 0) return this.reconnectAttempts.length;
+        return this.reconnectAttempts.filter(timestamp => Date.now() - timestamp <= maxAllowedTimestan).length;
+    }
+
+    /**
+     * Private Utility function to execute the reconnection
+    */
+    private executeReconnect() {
+        if (this.reconnectionAttemptCount >= this.options.retryAmount) {
+            const error = new Error(`Unable to connect after ${this.options.retryAmount} attempts.`)
+
+            this.reconnectionState = ReconnectionState.DESTROYING;
+
+            this.NodeManager.emit("error", this, error);
+            this.destroy(DestroyReasons.NodeReconnectFail);
+            // the reconnection State should be set on idle inside of the destroy function
+            return;
+        }
+
+        // state's should be changed before emitting an event
+        this.reconnectAttempts.push(Date.now());
+        this.reconnectionState = ReconnectionState.RECONNECTING;
+
+        this.NodeManager.emit("reconnecting", this);
+        this.connect();
+    };
+
+
+    /**
+     * Private function to reset the reconnection attempts
+     * @returns
+     */
+    private resetReconnectionAttempts(): void {
+        this.reconnectionState = ReconnectionState.IDLE;
+        this.reconnectAttempts = [];
+        clearTimeout(this.reconnectTimeout);
+        this.reconnectTimeout = null;
+        return;
+    }
+
+    /**
+     * Private function to reset timeouts/intervals for heartbeating/pinging
+     * @param heartbeat
+     * @param ping
+     * @returns
+     */
+    private resetAckTimeouts(heartbeat: boolean = true, ping: boolean = true): void {
+        if (ping) {
+            if (this.pingTimeout) clearTimeout(this.pingTimeout);
+            this.pingTimeout = null;
+        }
+        if (heartbeat) {
+            if (this.heartBeatInterval) clearInterval(this.heartBeatInterval);
+            this.heartBeatInterval = null;
+        }
+        return;
     }
 
     /** @private util function for handling opening events from websocket */
     private async open(): Promise<void> {
         this.isAlive = true;
+
+        // Reset reconnection state on successful connection
+        this.resetReconnectionAttempts();
 
         // trigger heartbeat-ping timeout - this is to check wether the client lost connection without knowing it
         if (this.options.enablePingOnStatsCheck) this.heartBeat();
@@ -1089,18 +1154,13 @@ export class LavalinkNode {
             // every x ms send a ping to lavalink to retrieve a pong later on
             this.heartBeatInterval = setInterval(() => {
                 if (!this.socket) return console.error("Node-Heartbeat-Interval - Socket not available - maybe reconnecting?");
-                if (!this.isAlive) this.close(500, "Node-Heartbeat-Timeout");
+                if (!this.isAlive) return this.close(500, "Node-Heartbeat-Timeout");
 
                 this.isAlive = false;
                 this.heartBeatPingTimestamp = performance.now();
-                this.socket.ping();
+                this.socket?.ping?.();
             }, this.options.heartBeatInterval || 30_000);
         }
-
-
-        if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
-        // reset the reconnect attempts amount
-        this.reconnectAttempts = 1;
 
         this.info = await this.fetchInfo().catch((e) => (console.error(e, "ON-OPEN-FETCH"), null));
 
@@ -1114,8 +1174,25 @@ export class LavalinkNode {
 
     /** @private util function for handling closing events from websocket */
     private close(code: number, reason: string): void {
-        if (this.pingTimeout) clearTimeout(this.pingTimeout);
-        if (this.heartBeatInterval) clearInterval(this.heartBeatInterval);
+        this.resetAckTimeouts(true, true);
+
+        try {
+            if (this.socket) {
+                this.socket.removeAllListeners();
+                this.socket = null;
+            }
+        } catch (e) {
+            if (this.NodeManager?.LavalinkManager?.options?.advancedOptions?.enableDebugEvents) {
+                this.NodeManager.LavalinkManager.emit("debug", DebugEvents.SocketCleanupError, {
+                    state: "warn",
+                    message: `An error occurred during socket cleanup in close() (likely a race condition): ${e.message}`,
+                    functionLayer: "LavalinkNode > close()",
+                });
+            }
+        }
+
+        this.isAlive = false;
+
         if (code === 1006 && !reason) reason = "Socket got terminated due to no ping connection";
         if (code === 1000 && reason === "Node-Disconnect") return; // manually disconnected and already emitted the event.
 
@@ -1126,7 +1203,7 @@ export class LavalinkNode {
                 this.reconnect();
             }
         }
-        
+
         this.NodeManager.LavalinkManager.players
             .filter((p) => p?.node?.options?.id === this?.options?.id)
             .forEach((p) => {
@@ -1143,6 +1220,8 @@ export class LavalinkNode {
     private error(error: Error): void {
         if (!error) return;
         this.NodeManager.emit("error", this, error);
+        this.reconnectionState = ReconnectionState.IDLE;
+        this.reconnect();
         if (this.options.closeOnError) {
             if (this.heartBeatInterval) clearInterval(this.heartBeatInterval);
             if (this.pingTimeout) clearTimeout(this.pingTimeout);
@@ -1214,6 +1293,8 @@ export class LavalinkNode {
                 this.handleEvent(payload);
                 break;
             case "ready":  // payload: { resumed: false, sessionId: 'ytva350aevn6n9n8', op: 'ready' }
+                this.resetReconnectionAttempts();
+
                 this.sessionId = payload.sessionId;
                 this.resuming.enabled = payload.resumed;
                 if (payload.resumed === true) {
