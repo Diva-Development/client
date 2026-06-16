@@ -5079,6 +5079,12 @@ var LavalinkManager = class extends EventEmitter2 {
   initiated = false;
   /** All Players stored in a MiniMap */
   players = new MiniMap();
+  /** Timestamp (per shard id) of the most recent gateway re-identify (a READY after the first one) */
+  reidentifiedAtByShard = /* @__PURE__ */ new Map();
+  /** Shard ids for which we've already seen the initial READY (so the next READY is a reconnect) */
+  seenShardReadies = /* @__PURE__ */ new Set();
+  /** Total shard count, learned from READY payloads, used to map guildId -> shardId */
+  knownShardCount = 1;
   /**
    * Applies the options provided by the User
    * @param options
@@ -5103,7 +5109,9 @@ var LavalinkManager = class extends EventEmitter2 {
         onDisconnect: {
           destroyPlayer: options?.playerOptions?.onDisconnect?.destroyPlayer ?? true,
           autoReconnect: options?.playerOptions?.onDisconnect?.autoReconnect ?? false,
-          autoReconnectOnlyWithTracks: options?.playerOptions?.onDisconnect?.autoReconnectOnlyWithTracks ?? false
+          autoReconnectOnlyWithTracks: options?.playerOptions?.onDisconnect?.autoReconnectOnlyWithTracks ?? false,
+          reconnectOnReidentify: options?.playerOptions?.onDisconnect?.reconnectOnReidentify ?? false,
+          reidentifyWindowMs: options?.playerOptions?.onDisconnect?.reidentifyWindowMs ?? 6e4
         },
         onEmptyQueue: {
           autoPlayFunction: options?.playerOptions?.onEmptyQueue?.autoPlayFunction ?? null,
@@ -5252,6 +5260,36 @@ var LavalinkManager = class extends EventEmitter2 {
     return this.players.get(guildId);
   }
   /**
+   * Whether guildId's shard re-identified within `reidentifyWindowMs` — i.e. a bot
+   * voice-drop happening right now is a transient gateway artifact (fresh IDENTIFY
+   * after a failed RESUME), not a real kick/leave.
+   *
+   * Consumers can use this to guard their own `voiceStateUpdate` handlers so they
+   * don't tear down a player on a reconnect-induced null voice-state.
+   *
+   * @param guildId The guildId to check
+   * @returns `true` if a recent re-identify on the guild's shard makes a drop look transient
+   *
+   * @example
+   * ```ts
+   * client.on("voiceStateUpdate", (oldState, newState) => {
+   *   if (newState.id !== client.user.id || newState.channelId) return;
+   *   if (client.lavalink.isReidentifyReconnect(newState.guild.id)) return; // ignore reconnect drop
+   *   // ... handle a real disconnect
+   * });
+   * ```
+   */
+  isReidentifyReconnect(guildId) {
+    const windowMs = this.options?.playerOptions?.onDisconnect?.reidentifyWindowMs ?? 6e4;
+    let shardId = 0;
+    try {
+      shardId = Number((BigInt(guildId) >> 22n) % BigInt(this.knownShardCount || 1));
+    } catch {
+    }
+    const at = this.reidentifiedAtByShard.get(shardId);
+    return at !== void 0 && Date.now() - at < windowMs;
+  }
+  /**
    * Create a Music-Player. If a player exists, then it returns it before creating a new one
    * @param options
    * @returns
@@ -5395,6 +5433,17 @@ var LavalinkManager = class extends EventEmitter2 {
    * ```
    */
   async sendRawData(data) {
+    if ("t" in data && data.t === "READY") {
+      const ready = "d" in data ? data.d : data;
+      const shard = ready?.shard;
+      if (Array.isArray(shard)) {
+        if (typeof shard[1] === "number" && shard[1] > 0) this.knownShardCount = shard[1];
+        const id = typeof shard[0] === "number" ? shard[0] : 0;
+        if (this.seenShardReadies.has(id)) this.reidentifiedAtByShard.set(id, Date.now());
+        else this.seenShardReadies.add(id);
+      }
+      return;
+    }
     if (!this.initiated) {
       if (this.options?.advancedOptions?.enableDebugEvents) {
         this.emit("debug", "NoAudioDebug" /* NoAudioDebug */, {
@@ -5547,6 +5596,21 @@ var LavalinkManager = class extends EventEmitter2 {
         if (selfDeafChanged || serverDeafChanged) this.emit("playerDeafChange", player, player.voiceState.selfDeaf, player.voiceState.serverDeaf);
         if (suppressChange) this.emit("playerSuppressChange", player, player.voiceState.suppress);
       } else {
+        if (this.options?.playerOptions?.onDisconnect?.reconnectOnReidentify && this.isReidentifyReconnect(update.guild_id)) {
+          if (player.options.voiceChannelId) {
+            const prevSession = player.voice?.sessionId;
+            player.connect().catch(() => {
+            });
+            setTimeout(() => {
+              if (this.getPlayer(player.guildId) !== player) return;
+              if (!player.voice?.sessionId || player.voice.sessionId === prevSession) {
+                player.destroy("Disconnected" /* Disconnected */).catch(() => {
+                });
+              }
+            }, 15e3);
+          }
+          return;
+        }
         const {
           autoReconnectOnlyWithTracks,
           destroyPlayer,

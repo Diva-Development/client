@@ -74,6 +74,13 @@ export class LavalinkManager<CustomPlayerT extends Player = Player> extends Even
     /** All Players stored in a MiniMap */
     public readonly players: MiniMap<string, CustomPlayerT> = new MiniMap();
 
+    /** Timestamp (per shard id) of the most recent gateway re-identify (a READY after the first one) */
+    private reidentifiedAtByShard = new Map<number, number>();
+    /** Shard ids for which we've already seen the initial READY (so the next READY is a reconnect) */
+    private seenShardReadies = new Set<number>();
+    /** Total shard count, learned from READY payloads, used to map guildId -> shardId */
+    private knownShardCount = 1;
+
     /**
      * Applies the options provided by the User
      * @param options
@@ -99,6 +106,8 @@ export class LavalinkManager<CustomPlayerT extends Player = Player> extends Even
                     destroyPlayer: options?.playerOptions?.onDisconnect?.destroyPlayer ?? true,
                     autoReconnect: options?.playerOptions?.onDisconnect?.autoReconnect ?? false,
                     autoReconnectOnlyWithTracks: options?.playerOptions?.onDisconnect?.autoReconnectOnlyWithTracks ?? false,
+                    reconnectOnReidentify: options?.playerOptions?.onDisconnect?.reconnectOnReidentify ?? false,
+                    reidentifyWindowMs: options?.playerOptions?.onDisconnect?.reidentifyWindowMs ?? 60_000,
                 },
                 onEmptyQueue: {
                     autoPlayFunction: options?.playerOptions?.onEmptyQueue?.autoPlayFunction ?? null,
@@ -272,6 +281,34 @@ export class LavalinkManager<CustomPlayerT extends Player = Player> extends Even
     }
 
     /**
+     * Whether guildId's shard re-identified within `reidentifyWindowMs` — i.e. a bot
+     * voice-drop happening right now is a transient gateway artifact (fresh IDENTIFY
+     * after a failed RESUME), not a real kick/leave.
+     *
+     * Consumers can use this to guard their own `voiceStateUpdate` handlers so they
+     * don't tear down a player on a reconnect-induced null voice-state.
+     *
+     * @param guildId The guildId to check
+     * @returns `true` if a recent re-identify on the guild's shard makes a drop look transient
+     *
+     * @example
+     * ```ts
+     * client.on("voiceStateUpdate", (oldState, newState) => {
+     *   if (newState.id !== client.user.id || newState.channelId) return;
+     *   if (client.lavalink.isReidentifyReconnect(newState.guild.id)) return; // ignore reconnect drop
+     *   // ... handle a real disconnect
+     * });
+     * ```
+     */
+    public isReidentifyReconnect(guildId: string): boolean {
+        const windowMs = this.options?.playerOptions?.onDisconnect?.reidentifyWindowMs ?? 60000;
+        let shardId = 0;
+        try { shardId = Number((BigInt(guildId) >> 22n) % BigInt(this.knownShardCount || 1)); } catch { /* invalid guildId -> shard 0 */ }
+        const at = this.reidentifiedAtByShard.get(shardId);
+        return at !== undefined && Date.now() - at < windowMs;
+    }
+
+    /**
      * Create a Music-Player. If a player exists, then it returns it before creating a new one
      * @param options
      * @returns
@@ -426,6 +463,23 @@ export class LavalinkManager<CustomPlayerT extends Player = Player> extends Even
      * ```
      */
     public async sendRawData(data: VoicePacket | VoiceServer | VoiceState | ChannelDeletePacket): Promise<void> {
+        // Shard re-identify detection (a fresh IDENTIFY dispatches READY; a resumed session dispatches RESUMED instead).
+        // Tracked before the `initiated` guard on purpose: the initial-connect READY usually arrives before the user
+        // calls Manager#init() (which runs in the client "ready" event), and we must record it so the FIRST real
+        // re-identify after startup isn't mistaken for the initial connect. This only mutates internal state.
+        if ("t" in data && (data.t as string) === "READY") {
+            const ready = ("d" in data ? data.d : data) as unknown as { shard?: [number, number] };
+            const shard = ready?.shard;
+            if (Array.isArray(shard)) {
+                if (typeof shard[1] === "number" && shard[1] > 0) this.knownShardCount = shard[1];
+                const id = typeof shard[0] === "number" ? shard[0] : 0;
+                // first READY per shard is the initial connect, not a reconnect
+                if (this.seenShardReadies.has(id)) this.reidentifiedAtByShard.set(id, Date.now());
+                else this.seenShardReadies.add(id);
+            }
+            return;
+        }
+
         if (!this.initiated) {
             if (this.options?.advancedOptions?.enableDebugEvents) {
                 this.emit("debug", DebugEvents.NoAudioDebug, {
@@ -600,6 +654,23 @@ export class LavalinkManager<CustomPlayerT extends Player = Player> extends Even
                 if (suppressChange) this.emit("playerSuppressChange", player, player.voiceState.suppress);
 
             } else {
+
+                // Reconnect-induced drop (shard re-identified): re-handshake voice so Lavalink resumes
+                // the in-memory track from its position, instead of destroying the player.
+                if (this.options?.playerOptions?.onDisconnect?.reconnectOnReidentify && this.isReidentifyReconnect(update.guild_id)) {
+                    if (player.options.voiceChannelId) {
+                        const prevSession = player.voice?.sessionId;
+                        player.connect().catch(() => {});            // re-handshake; Lavalink resumes the track from its position
+                        setTimeout(() => {
+                            if (this.getPlayer(player.guildId) !== player) return;
+                            // no fresh voice session arrived -> rejoin failed (channel gone / perms revoked) -> clean up
+                            if (!player.voice?.sessionId || player.voice.sessionId === prevSession) {
+                                player.destroy(DestroyReasons.Disconnected).catch(() => {});
+                            }
+                        }, 15000);
+                    }
+                    return;
+                }
 
                 const {
                     autoReconnectOnlyWithTracks,

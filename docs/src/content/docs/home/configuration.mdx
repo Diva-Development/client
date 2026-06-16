@@ -66,7 +66,9 @@ client.lavalink = new LavalinkManager({
         requesterTransformer: requesterTransformer,
         onDisconnect: {
             autoReconnect: true, // automatically attempts a reconnect, if the bot disconnects from the voice channel, if it fails, it get's destroyed
-            destroyPlayer: false // overrides autoReconnect and directly destroys the player if the bot disconnects from the vc
+            destroyPlayer: false, // overrides autoReconnect and directly destroys the player if the bot disconnects from the vc
+            reconnectOnReidentify: false, // if true: a voice-drop caused by a shard re-identify (fresh gateway IDENTIFY after a failed RESUME) re-handshakes voice so lavalink resumes the track, instead of destroying. real kicks/leaves still behave as configured above
+            reidentifyWindowMs: 60_000, // how long (ms) after a shard READY a bot voice-drop is still treated as a reconnect artifact (only used with reconnectOnReidentify)
         },
         onEmptyQueue: {
             // will auto destroy the player after 30s if the queue got empty and autoplay function does not add smt to the queue

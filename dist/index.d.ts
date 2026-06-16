@@ -3124,6 +3124,23 @@ interface ManagerPlayerOptions<CustomPlayerT extends Player = Player> {
         autoReconnectOnlyWithTracks?: boolean;
         /** Instantly destroy player (overrides autoReconnect) | Don't provide == disable feature*/
         destroyPlayer?: boolean;
+        /**
+         * When the bot's voice connection drops because its gateway shard did a fresh
+         * IDENTIFY (a new session after a failed RESUME), Discord sends a bot
+         * `VOICE_STATE_UPDATE { channel_id: null }` that is byte-identical to a real
+         * kick/leave. If `true`, such reconnect-induced drops are detected (via a recent
+         * `READY` on the shard) and the player re-handshakes its voice connection so
+         * Lavalink resumes the in-memory track from its position, instead of running the
+         * configured `destroyPlayer` / `autoReconnect` logic. Real kicks/leaves are
+         * unaffected. @default false
+         */
+        reconnectOnReidentify?: boolean;
+        /**
+         * How long (in ms) after a shard `READY` a bot voice-drop is still treated as a
+         * reconnect artifact rather than a real kick. Only used when
+         * `reconnectOnReidentify` is `true`. @default 60000
+         */
+        reidentifyWindowMs?: number;
     };
     /** Minimum time to play the song before autoPlayFunction is executed (prevents error spamming) Set to 0 to disable it @default 10000 */
     minAutoPlayMs?: number;
@@ -3243,6 +3260,12 @@ declare class LavalinkManager<CustomPlayerT extends Player = Player> extends Eve
     initiated: boolean;
     /** All Players stored in a MiniMap */
     readonly players: MiniMap<string, CustomPlayerT>;
+    /** Timestamp (per shard id) of the most recent gateway re-identify (a READY after the first one) */
+    private reidentifiedAtByShard;
+    /** Shard ids for which we've already seen the initial READY (so the next READY is a reconnect) */
+    private seenShardReadies;
+    /** Total shard count, learned from READY payloads, used to map guildId -> shardId */
+    private knownShardCount;
     /**
      * Applies the options provided by the User
      * @param options
@@ -3329,6 +3352,27 @@ declare class LavalinkManager<CustomPlayerT extends Player = Player> extends Eve
      * @returns
      */
     getPlayer(guildId: string): CustomPlayerT | undefined;
+    /**
+     * Whether guildId's shard re-identified within `reidentifyWindowMs` — i.e. a bot
+     * voice-drop happening right now is a transient gateway artifact (fresh IDENTIFY
+     * after a failed RESUME), not a real kick/leave.
+     *
+     * Consumers can use this to guard their own `voiceStateUpdate` handlers so they
+     * don't tear down a player on a reconnect-induced null voice-state.
+     *
+     * @param guildId The guildId to check
+     * @returns `true` if a recent re-identify on the guild's shard makes a drop look transient
+     *
+     * @example
+     * ```ts
+     * client.on("voiceStateUpdate", (oldState, newState) => {
+     *   if (newState.id !== client.user.id || newState.channelId) return;
+     *   if (client.lavalink.isReidentifyReconnect(newState.guild.id)) return; // ignore reconnect drop
+     *   // ... handle a real disconnect
+     * });
+     * ```
+     */
+    isReidentifyReconnect(guildId: string): boolean;
     /**
      * Create a Music-Player. If a player exists, then it returns it before creating a new one
      * @param options

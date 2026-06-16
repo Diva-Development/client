@@ -232,6 +232,23 @@ export interface ManagerPlayerOptions<CustomPlayerT extends Player = Player> {
         autoReconnectOnlyWithTracks?: boolean;
         /** Instantly destroy player (overrides autoReconnect) | Don't provide == disable feature*/
         destroyPlayer?: boolean;
+        /**
+         * When the bot's voice connection drops because its gateway shard did a fresh
+         * IDENTIFY (a new session after a failed RESUME), Discord sends a bot
+         * `VOICE_STATE_UPDATE { channel_id: null }` that is byte-identical to a real
+         * kick/leave. If `true`, such reconnect-induced drops are detected (via a recent
+         * `READY` on the shard) and the player re-handshakes its voice connection so
+         * Lavalink resumes the in-memory track from its position, instead of running the
+         * configured `destroyPlayer` / `autoReconnect` logic. Real kicks/leaves are
+         * unaffected. @default false
+         */
+        reconnectOnReidentify?: boolean;
+        /**
+         * How long (in ms) after a shard `READY` a bot voice-drop is still treated as a
+         * reconnect artifact rather than a real kick. Only used when
+         * `reconnectOnReidentify` is `true`. @default 60000
+         */
+        reidentifyWindowMs?: number;
     };
     /** Minimum time to play the song before autoPlayFunction is executed (prevents error spamming) Set to 0 to disable it @default 10000 */
     minAutoPlayMs?: number;
