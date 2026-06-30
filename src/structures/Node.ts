@@ -2,6 +2,7 @@ import { isAbsolute } from "path";
 import WebSocket from "ws";
 
 import { DebugEvents, DestroyReasons, validSponsorBlocks } from "./Constants";
+import { averageRegionCoordinates, RegionCoordinates } from "./Regions";
 import { ReconnectionState } from "./Types/Node";
 import { NodeSymbol, queueTrackEnd, safeStringify } from "./Utils";
 
@@ -115,6 +116,23 @@ export class LavalinkNode {
         this.options.regions = (this.options.regions || []).map(a => a.toLowerCase());
 
         Object.defineProperty(this, NodeSymbol, { configurable: true, value: true });
+    }
+
+    /** Cached resolved coordinates of this node (explicit option or derived from regions). */
+    private _coordinates?: RegionCoordinates | null;
+
+    /**
+     * The geo-coordinates of this node, used for nearest-node routing.
+     * Uses the explicit `coordinates` option if provided, otherwise derives them
+     * from the node's configured `regions`. Returns null if neither is available.
+     */
+    public get coordinates(): RegionCoordinates | null {
+        if (this._coordinates !== undefined) return this._coordinates;
+        const explicit = this.options.coordinates;
+        this._coordinates = (explicit && typeof explicit.lat === "number" && typeof explicit.lon === "number")
+            ? { lat: explicit.lat, lon: explicit.lon }
+            : (averageRegionCoordinates(this.options.regions) ?? null);
+        return this._coordinates;
     }
 
     /**

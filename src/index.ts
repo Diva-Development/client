@@ -5,6 +5,7 @@ export * from "./structures/Node";
 export * from "./structures/NodeManager";
 export * from "./structures/Player";
 export * from "./structures/Queue";
+export * from "./structures/Regions";
 export * from "./structures/Utils";
 export * from "./structures/Types/Track";
 export * from "./structures/Types/Utils";

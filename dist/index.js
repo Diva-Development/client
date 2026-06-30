@@ -34,6 +34,7 @@ __export(index_exports, {
   DefaultSources: () => DefaultSources,
   DestroyReasons: () => DestroyReasons,
   DisconnectReasons: () => DisconnectReasons,
+  DiscordVoiceRegionCoordinates: () => DiscordVoiceRegionCoordinates,
   EQList: () => EQList,
   FilterManager: () => FilterManager,
   LavalinkManager: () => LavalinkManager,
@@ -52,6 +53,9 @@ __export(index_exports, {
   TrackSymbol: () => TrackSymbol,
   UnresolvedTrackSymbol: () => UnresolvedTrackSymbol,
   audioOutputsData: () => audioOutputsData,
+  averageRegionCoordinates: () => averageRegionCoordinates,
+  getVoiceRegionCoordinates: () => getVoiceRegionCoordinates,
+  haversineDistance: () => haversineDistance,
   isTargetedStore: () => isTargetedStore,
   parseLavalinkConnUrl: () => parseLavalinkConnUrl,
   queueTrackEnd: () => queueTrackEnd,
@@ -369,6 +373,86 @@ var import_events = require("events");
 var import_path = require("path");
 var import_ws = __toESM(require("ws"));
 
+// src/structures/Regions.ts
+var DiscordVoiceRegionCoordinates = {
+  // Europe
+  amsterdam: { lat: 52.37, lon: 4.9 },
+  rotterdam: { lat: 51.92, lon: 4.48 },
+  frankfurt: { lat: 50.11, lon: 8.68 },
+  london: { lat: 51.51, lon: -0.13 },
+  madrid: { lat: 40.42, lon: -3.7 },
+  milan: { lat: 45.46, lon: 9.19 },
+  bucharest: { lat: 44.43, lon: 26.1 },
+  warsaw: { lat: 52.23, lon: 21.01 },
+  stockholm: { lat: 59.33, lon: 18.07 },
+  finland: { lat: 60.17, lon: 24.94 },
+  russia: { lat: 55.76, lon: 37.62 },
+  "eu-west": { lat: 53.35, lon: -6.26 },
+  "eu-central": { lat: 50.11, lon: 8.68 },
+  europe: { lat: 50.11, lon: 8.68 },
+  // North America
+  "us-east": { lat: 39.04, lon: -77.49 },
+  "us-central": { lat: 41.88, lon: -87.63 },
+  "us-south": { lat: 32.78, lon: -96.8 },
+  "us-west": { lat: 45.84, lon: -119.7 },
+  newark: { lat: 40.74, lon: -74.17 },
+  atlanta: { lat: 33.75, lon: -84.39 },
+  "st-pete": { lat: 27.77, lon: -82.64 },
+  "santa-clara": { lat: 37.35, lon: -121.96 },
+  seattle: { lat: 47.61, lon: -122.33 },
+  montreal: { lat: 45.5, lon: -73.57 },
+  // South America
+  brazil: { lat: -23.55, lon: -46.63 },
+  "buenos-aires": { lat: -34.6, lon: -58.38 },
+  santiago: { lat: -33.45, lon: -70.67 },
+  // Middle East / Africa
+  dubai: { lat: 25.2, lon: 55.27 },
+  "tel-aviv": { lat: 32.07, lon: 34.78 },
+  southafrica: { lat: -26.2, lon: 28.05 },
+  // Asia / Oceania
+  india: { lat: 19.08, lon: 72.88 },
+  singapore: { lat: 1.35, lon: 103.82 },
+  hongkong: { lat: 22.32, lon: 114.17 },
+  japan: { lat: 35.68, lon: 139.69 },
+  "south-korea": { lat: 37.57, lon: 126.98 },
+  sydney: { lat: -33.87, lon: 151.21 }
+};
+var RegionAliases = {
+  us: "us-central",
+  usa: "us-central",
+  eu: "frankfurt",
+  asia: "singapore",
+  oceania: "sydney",
+  africa: "southafrica",
+  "south-america": "brazil"
+};
+function getVoiceRegionCoordinates(region) {
+  if (!region || typeof region !== "string") return void 0;
+  let key = region.toLowerCase().trim();
+  if (DiscordVoiceRegionCoordinates[key]) return DiscordVoiceRegionCoordinates[key];
+  if (key.startsWith("vip-")) key = key.slice(4);
+  if (DiscordVoiceRegionCoordinates[key]) return DiscordVoiceRegionCoordinates[key];
+  if (RegionAliases[key]) return DiscordVoiceRegionCoordinates[RegionAliases[key]];
+  return void 0;
+}
+function haversineDistance(a, b) {
+  const toRad = (deg) => deg * Math.PI / 180;
+  const earthRadiusKm = 6371;
+  const dLat = toRad(b.lat - a.lat);
+  const dLon = toRad(b.lon - a.lon);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  return earthRadiusKm * 2 * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+function averageRegionCoordinates(regions) {
+  if (!regions?.length) return void 0;
+  const coords = regions.map(getVoiceRegionCoordinates).filter((c) => !!c);
+  if (!coords.length) return void 0;
+  const sum = coords.reduce((acc, c) => ({ lat: acc.lat + c.lat, lon: acc.lon + c.lon }), { lat: 0, lon: 0 });
+  return { lat: sum.lat / coords.length, lon: sum.lon / coords.length };
+}
+
 // src/structures/Types/Node.ts
 var ReconnectionState = /* @__PURE__ */ ((ReconnectionState2) => {
   ReconnectionState2["IDLE"] = "IDLE";
@@ -528,10 +612,10 @@ var SourceLinksRegexes = {
 };
 
 // src/structures/Utils.ts
-var TrackSymbol = Symbol("LC-Track");
-var UnresolvedTrackSymbol = Symbol("LC-Track-Unresolved");
-var QueueSymbol = Symbol("LC-Queue");
-var NodeSymbol = Symbol("LC-Node");
+var TrackSymbol = /* @__PURE__ */ Symbol("LC-Track");
+var UnresolvedTrackSymbol = /* @__PURE__ */ Symbol("LC-Track-Unresolved");
+var QueueSymbol = /* @__PURE__ */ Symbol("LC-Queue");
+var NodeSymbol = /* @__PURE__ */ Symbol("LC-Node");
 var escapeRegExp = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 function parseLavalinkConnUrl(connectionUrl) {
   if (!connectionUrl.startsWith("lavalink://")) throw new Error(`ConnectionUrl (${connectionUrl}) must start with 'lavalink://'`);
@@ -1078,6 +1162,19 @@ var LavalinkNode = class {
     if (this.options.secure && this.options.port !== 443) throw new SyntaxError("If secure is true, then the port must be 443");
     this.options.regions = (this.options.regions || []).map((a) => a.toLowerCase());
     Object.defineProperty(this, NodeSymbol, { configurable: true, value: true });
+  }
+  /** Cached resolved coordinates of this node (explicit option or derived from regions). */
+  _coordinates;
+  /**
+   * The geo-coordinates of this node, used for nearest-node routing.
+   * Uses the explicit `coordinates` option if provided, otherwise derives them
+   * from the node's configured `regions`. Returns null if neither is available.
+   */
+  get coordinates() {
+    if (this._coordinates !== void 0) return this._coordinates;
+    const explicit = this.options.coordinates;
+    this._coordinates = explicit && typeof explicit.lat === "number" && typeof explicit.lon === "number" ? { lat: explicit.lat, lon: explicit.lon } : averageRegionCoordinates(this.options.regions) ?? null;
+    return this._coordinates;
   }
   /**
    * Raw Request util function
@@ -2688,6 +2785,49 @@ var NodeManager = class extends import_events.EventEmitter {
         }
         break;
     }
+  }
+  /**
+   * Smart-pick the best node for a player, based on the voice region.
+   *
+   * Selection order:
+   *  1. **Exact region match** — the least-used connected node whose `regions` includes `vcRegion`.
+   *  2. **Nearest by distance** — the connected node geographically closest to `vcRegion`
+   *     (great-circle distance; ties broken by lowest load), when the region is known.
+   *  3. **Least-used fallback** — the least-used connected node (region unknown / no coordinates).
+   *
+   * @param vcRegion The voice channel region (e.g. `interaction.member.voice.rtcRegion`)
+   * @param sortType How to measure "least used" for load-based ranking & tie-breaks
+   * @returns The chosen node, or null if no node is connected
+   *
+   * @example
+   * ```ts
+   * const node = client.lavalink.nodeManager.getOptimalNode(voiceChannel.rtcRegion);
+   * ```
+   */
+  getOptimalNode(vcRegion, sortType = "players") {
+    const nodes = this.leastUsedNodes(sortType);
+    if (!nodes.length) return null;
+    if (vcRegion) {
+      const region = vcRegion.toLowerCase();
+      const exact = nodes.find((node) => node.options?.regions?.includes(region));
+      if (exact) return exact;
+      const target = getVoiceRegionCoordinates(region);
+      if (target) {
+        let closest = null;
+        let closestDistance = Infinity;
+        for (const node of nodes) {
+          const coords = node.coordinates;
+          if (!coords) continue;
+          const distance = haversineDistance(target, coords);
+          if (distance < closestDistance) {
+            closestDistance = distance;
+            closest = node;
+          }
+        }
+        if (closest) return closest;
+      }
+    }
+    return nodes[0] || null;
   }
   /**
    * Delete a node from the nodeManager and destroy it
@@ -4359,8 +4499,7 @@ var Player = class {
           functionLayer: "Player > constructor()"
         });
       }
-      const least = this.LavalinkManager.nodeManager.leastUsedNodes();
-      this.node = least.filter((v) => options.vcRegion ? v.options?.regions?.includes(options.vcRegion) : true)[0] || least[0] || null;
+      this.node = this.LavalinkManager.nodeManager.getOptimalNode(options.vcRegion);
     }
     if (!this.node) throw new Error("No available Node was found, please add a LavalinkNode to the Manager via Manager.NodeManager#createNode");
     if (typeof options.volume === "number" && !isNaN(options.volume)) this.volume = Number(options.volume);
@@ -5662,6 +5801,7 @@ var LavalinkManager = class extends import_events2.EventEmitter {
   DefaultSources,
   DestroyReasons,
   DisconnectReasons,
+  DiscordVoiceRegionCoordinates,
   EQList,
   FilterManager,
   LavalinkManager,
@@ -5680,6 +5820,9 @@ var LavalinkManager = class extends import_events2.EventEmitter {
   TrackSymbol,
   UnresolvedTrackSymbol,
   audioOutputsData,
+  averageRegionCoordinates,
+  getVoiceRegionCoordinates,
+  haversineDistance,
   isTargetedStore,
   parseLavalinkConnUrl,
   queueTrackEnd,

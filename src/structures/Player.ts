@@ -120,8 +120,7 @@ export class Player {
                 });
             }
 
-            const least = this.LavalinkManager.nodeManager.leastUsedNodes();
-            this.node = least.filter(v => options.vcRegion ? v.options?.regions?.includes(options.vcRegion) : true)[0] || least[0] || null;
+            this.node = this.LavalinkManager.nodeManager.getOptimalNode(options.vcRegion);
         }
         if (!this.node) throw new Error("No available Node was found, please add a LavalinkNode to the Manager via Manager.NodeManager#createNode")
 

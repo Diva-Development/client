@@ -2,6 +2,7 @@ import { EventEmitter } from "events";
 
 import { DestroyReasons, DisconnectReasons } from "./Constants";
 import { LavalinkNode } from "./Node";
+import { getVoiceRegionCoordinates, haversineDistance } from "./Regions";
 import { MiniMap } from "./Utils";
 
 import type { LavalinkNodeIdentifier, LavalinkNodeOptions, NodeManagerEvents } from "./Types/Node";
@@ -182,6 +183,58 @@ export class NodeManager extends EventEmitter {
                     .sort((a, b) => (a.stats?.players || 0) - (b.stats?.players || 0))
             } break;
         }
+    }
+
+    /**
+     * Smart-pick the best node for a player, based on the voice region.
+     *
+     * Selection order:
+     *  1. **Exact region match** — the least-used connected node whose `regions` includes `vcRegion`.
+     *  2. **Nearest by distance** — the connected node geographically closest to `vcRegion`
+     *     (great-circle distance; ties broken by lowest load), when the region is known.
+     *  3. **Least-used fallback** — the least-used connected node (region unknown / no coordinates).
+     *
+     * @param vcRegion The voice channel region (e.g. `interaction.member.voice.rtcRegion`)
+     * @param sortType How to measure "least used" for load-based ranking & tie-breaks
+     * @returns The chosen node, or null if no node is connected
+     *
+     * @example
+     * ```ts
+     * const node = client.lavalink.nodeManager.getOptimalNode(voiceChannel.rtcRegion);
+     * ```
+     */
+    public getOptimalNode(vcRegion?: string | null, sortType: "memory" | "cpuLavalink" | "cpuSystem" | "calls" | "playingPlayers" | "players" = "players"): LavalinkNode | null {
+        // leastUsedNodes is sorted by load ascending, so iterating it gives load-based tie-breaks for free
+        const nodes = this.leastUsedNodes(sortType);
+        if (!nodes.length) return null;
+
+        if (vcRegion) {
+            const region = vcRegion.toLowerCase();
+
+            // 1. exact region match (least-used among matches)
+            const exact = nodes.find(node => node.options?.regions?.includes(region));
+            if (exact) return exact;
+
+            // 2. nearest node by great-circle distance
+            const target = getVoiceRegionCoordinates(region);
+            if (target) {
+                let closest: LavalinkNode | null = null;
+                let closestDistance = Infinity;
+                for (const node of nodes) {
+                    const coords = node.coordinates;
+                    if (!coords) continue;
+                    const distance = haversineDistance(target, coords);
+                    if (distance < closestDistance) {
+                        closestDistance = distance;
+                        closest = node;
+                    }
+                }
+                if (closest) return closest;
+            }
+        }
+
+        // 3. least-used fallback
+        return nodes[0] || null;
     }
 
     /**

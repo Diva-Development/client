@@ -24,8 +24,14 @@ export interface LavalinkNodeOptions {
     sessionId?: string;
     /** Add a Custom ID to the node, for later use */
     id?: string;
-    /** Voice Regions of this Node */
+    /** Voice Regions of this Node (Discord rtcRegion ids, e.g. ["us-east", "newark"]) */
     regions?: string[];
+    /**
+     * Explicit geo-coordinates of this node, used for nearest-node routing when a
+     * voice region doesn't exactly match any node's `regions`.
+     * If omitted, the coordinates are derived from `regions`.
+     */
+    coordinates?: { lat: number; lon: number };
     /** The max amount of retries for this node. */
     retryAmount?: number;
     /** The delay of how often to retry a reconnection. */
