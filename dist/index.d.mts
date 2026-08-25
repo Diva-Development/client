@@ -43,24 +43,74 @@ declare function haversineDistance(a: RegionCoordinates, b: RegionCoordinates): 
  */
 declare function averageRegionCoordinates(regions?: string[]): RegionCoordinates | undefined;
 /**
+ * IATA airport code -> Discord region name.
+ *
+ * Ported from the server-side `VoiceEndpointClassifier`; keep in sync with it so
+ * client-side region labels match server metrics exactly.
+ *
+ * Note: several codes intentionally share a region (`den`/`dfw`/`ord` -> us-central,
+ * `lax`/`sjc`/`phx` -> us-west, `bom`/`maa` -> india), so the mapping is **not
+ * reversible** - you cannot recover the airport from the region.
+ */
+declare const AirportRegions: Record<string, string>;
+/**
+ * Canonical Discord region names emitted by the classifier.
+ * Note `southafrica` has no hyphen while `south-korea` does - inconsistent, but it
+ * matches what the server emits, which matters when comparing against its metrics.
+ */
+declare const KnownRegions: Set<string>;
+/**
+ * Approximate coordinates for airport codes seen in Cloudflare voice endpoints.
+ *
+ * Covers every code in {@link AirportRegions} plus edges Discord may add later.
+ * Used to geo-route a **novel** IATA token (one with no {@link AirportRegions}
+ * entry, e.g. `yvr`) to the nearest node, instead of dropping it on the fallback
+ * node on another continent.
+ */
+declare const AirportCoordinates: Record<string, RegionCoordinates>;
+/** Where a voice endpoint is hosted. */
+type VoiceEndpointProvider = "cloudflare" | "discord" | "unknown";
+/**
  * Extract the Discord voice region id from a `VOICE_SERVER_UPDATE` endpoint.
  *
- * Discord endpoints look like `frankfurt1234.discord.media:443` — the first
- * hostname label is the region id with a trailing shard number. This is the only
- * way to learn the real region when the voice channel's `rtcRegion` is
- * "Automatic" (`null`), since Discord only resolves it at connect time.
+ * Handles both endpoint spellings, which normalize to the same region name:
+ *  - **Cloudflare**: `c-ewr13-927d9f5c.discord.media` (IATA code) -> `newark`
+ *  - **Legacy**: `frankfurt1234.discord.gg` (city name) -> `frankfurt`
  *
- * Multi-word regions keep their dashes (`us-east1234` -> `us-east`).
+ * This is the only way to learn the real region when the voice channel's
+ * `rtcRegion` is "Automatic" (`null`), since Discord resolves it at connect time.
+ *
+ * An unmapped edge is adopted as its raw token (e.g. `yvr`, `bog`) rather than
+ * discarded, so new datacenters surface instead of vanishing. Such a token has no
+ * coordinates, so routing falls through to the configured fallback node.
  *
  * @param endpoint The endpoint string from VOICE_SERVER_UPDATE (port optional)
  * @returns The region id, or undefined if it can't be parsed
  *
  * @example
  * ```ts
- * getRegionFromVoiceEndpoint("us-east1234.discord.media:443"); // "us-east"
+ * getRegionFromVoiceEndpoint("c-ewr13-927d9f5c.discord.media:443"); // "newark"
  * ```
  */
 declare function getRegionFromVoiceEndpoint(endpoint?: string | null): string | undefined;
+/**
+ * Classify a voice endpoint into its region and hosting provider.
+ * Mirrors the server-side `VoiceEndpointClassifier` so labels line up with its metrics.
+ *
+ * @param endpoint The endpoint string from VOICE_SERVER_UPDATE (port optional)
+ * @returns The resolved region (undefined if unparseable) and the provider
+ *
+ * @example
+ * ```ts
+ * classifyVoiceEndpoint("c-ewr13-927d9f5c.discord.media");
+ * // { region: "newark", provider: "cloudflare" }
+ * ```
+ */
+declare function classifyVoiceEndpoint(endpoint?: string | null): {
+    region?: string;
+    provider: VoiceEndpointProvider;
+    iata?: string;
+};
 
 declare class FilterManager {
     static EQList: {
@@ -3563,4 +3613,4 @@ declare const LavalinkPlugins: {
 /** Lavalink Sources regexes for url validations */
 declare const SourceLinksRegexes: Record<SourcesRegex, RegExp>;
 
-export { type AudioOutputs, type Awaitable, type Base64, type BaseNodeStats, type BasePlayOptions, type BotClientOptions, type CPUStats, type ChannelDeletePacket, type ChannelMixFilter, type ClientCustomSearchPlatformUtils, type ClientSearchPlatform, DebugEvents, type DeepRequired, DefaultQueueStore, DefaultSources, DestroyReasons, type DestroyReasonsType, DisconnectReasons, type DisconnectReasonsType, DiscordVoiceRegionCoordinates, type DistortionFilter, type DuncteSearchPlatform, type EQBand, EQList, type Exception, type FailingAddress, type FilterData, FilterManager, type FloatNumber, type FrameStats, type GitObject, type GuildShardPayload, type IntegerNumber, type InvalidLavalinkRestRequest, type JioSaavnSearchPlatform, type KaraokeFilter, type LavaSearchFilteredResponse, type LavaSearchQuery, type LavaSearchResponse, type LavaSearchType, type LavaSrcSearchPlatform, type LavaSrcSearchPlatformBase, type LavalinkClientSearchPlatform, type LavalinkClientSearchPlatformResolve, type LavalinkFilterData, type LavalinkInfo, LavalinkManager, type LavalinkManagerEvents, LavalinkNode, type LavalinkNodeIdentifier, type LavalinkNodeOptions, type LavalinkPlayOptions, type LavalinkPlayer, type LavalinkPlayerVoice, type LavalinkPlayerVoiceOptions, type LavalinkPlugin_JioSaavn_SourceNames, type LavalinkPlugin_LavaSrc_SourceNames, LavalinkPlugins, type LavalinkSearchPlatform, type LavalinkSourceNames, type LavalinkTrack, type LavalinkTrackInfo, type LoadTypes, type LowPassFilter, type LyricsEvent, type LyricsEventType, type LyricsFoundEvent, type LyricsLine, type LyricsLineEvent, type LyricsNotFoundEvent, type LyricsResult, type ManagerOptions, type ManagerPlayerOptions, type ManagerQueueOptions, ManagerUtils, type MemoryStats, MiniMap, type MiniMapConstructor, type ModifyRequest, NodeManager, type NodeManagerEvents, type NodeMessage, type NodeStats, NodeSymbol, type Opaque, type PlayOptions, Player, type PlayerEvent, type PlayerEventType, type PlayerEvents, type PlayerFilters, type PlayerJson, type PlayerOptions, type PlayerUpdateInfo, type PlaylistInfo, type PluginInfo, type PluginObject, Queue, type QueueChangesWatcher, QueueSaver, type QueueStoreManager, QueueSymbol, ReconnectionState, type RegionCoordinates, type RepeatMode, type RequiredManagerOptions, type RotationFilter, type RoutePlanner, type RoutePlannerTypes, type SearchPlatform, type SearchQuery, type SearchResult, type Session, type Severity, SourceLinksRegexes, type SourceNames, type SourcesRegex, type SponsorBlockChapterStarted, type SponsorBlockChaptersLoaded, type SponsorBlockSegment, type SponsorBlockSegmentEventType, type SponsorBlockSegmentEvents, type SponsorBlockSegmentSkipped, type SponsorBlockSegmentsLoaded, type State, type StoredQueue, type TargetedQueueStoreManager, type TimescaleFilter, type Track, type TrackEndEvent, type TrackEndReason, type TrackExceptionEvent, type TrackInfo, type TrackStartEvent, type TrackStuckEvent, TrackSymbol, type TremoloFilter, type UnresolvedQuery, type UnresolvedSearchResult, type UnresolvedTrack, type UnresolvedTrackInfo, UnresolvedTrackSymbol, type VersionObject, type VibratoFilter, type VoicePacket, type VoiceServer, type VoiceState, type WebSocketClosedEvent, type anyObject, audioOutputsData, averageRegionCoordinates, getRegionFromVoiceEndpoint, getVoiceRegionCoordinates, haversineDistance, isTargetedStore, parseLavalinkConnUrl, queueTrackEnd, safeStringify, validSponsorBlocks };
+export { AirportCoordinates, AirportRegions, type AudioOutputs, type Awaitable, type Base64, type BaseNodeStats, type BasePlayOptions, type BotClientOptions, type CPUStats, type ChannelDeletePacket, type ChannelMixFilter, type ClientCustomSearchPlatformUtils, type ClientSearchPlatform, DebugEvents, type DeepRequired, DefaultQueueStore, DefaultSources, DestroyReasons, type DestroyReasonsType, DisconnectReasons, type DisconnectReasonsType, DiscordVoiceRegionCoordinates, type DistortionFilter, type DuncteSearchPlatform, type EQBand, EQList, type Exception, type FailingAddress, type FilterData, FilterManager, type FloatNumber, type FrameStats, type GitObject, type GuildShardPayload, type IntegerNumber, type InvalidLavalinkRestRequest, type JioSaavnSearchPlatform, type KaraokeFilter, KnownRegions, type LavaSearchFilteredResponse, type LavaSearchQuery, type LavaSearchResponse, type LavaSearchType, type LavaSrcSearchPlatform, type LavaSrcSearchPlatformBase, type LavalinkClientSearchPlatform, type LavalinkClientSearchPlatformResolve, type LavalinkFilterData, type LavalinkInfo, LavalinkManager, type LavalinkManagerEvents, LavalinkNode, type LavalinkNodeIdentifier, type LavalinkNodeOptions, type LavalinkPlayOptions, type LavalinkPlayer, type LavalinkPlayerVoice, type LavalinkPlayerVoiceOptions, type LavalinkPlugin_JioSaavn_SourceNames, type LavalinkPlugin_LavaSrc_SourceNames, LavalinkPlugins, type LavalinkSearchPlatform, type LavalinkSourceNames, type LavalinkTrack, type LavalinkTrackInfo, type LoadTypes, type LowPassFilter, type LyricsEvent, type LyricsEventType, type LyricsFoundEvent, type LyricsLine, type LyricsLineEvent, type LyricsNotFoundEvent, type LyricsResult, type ManagerOptions, type ManagerPlayerOptions, type ManagerQueueOptions, ManagerUtils, type MemoryStats, MiniMap, type MiniMapConstructor, type ModifyRequest, NodeManager, type NodeManagerEvents, type NodeMessage, type NodeStats, NodeSymbol, type Opaque, type PlayOptions, Player, type PlayerEvent, type PlayerEventType, type PlayerEvents, type PlayerFilters, type PlayerJson, type PlayerOptions, type PlayerUpdateInfo, type PlaylistInfo, type PluginInfo, type PluginObject, Queue, type QueueChangesWatcher, QueueSaver, type QueueStoreManager, QueueSymbol, ReconnectionState, type RegionCoordinates, type RepeatMode, type RequiredManagerOptions, type RotationFilter, type RoutePlanner, type RoutePlannerTypes, type SearchPlatform, type SearchQuery, type SearchResult, type Session, type Severity, SourceLinksRegexes, type SourceNames, type SourcesRegex, type SponsorBlockChapterStarted, type SponsorBlockChaptersLoaded, type SponsorBlockSegment, type SponsorBlockSegmentEventType, type SponsorBlockSegmentEvents, type SponsorBlockSegmentSkipped, type SponsorBlockSegmentsLoaded, type State, type StoredQueue, type TargetedQueueStoreManager, type TimescaleFilter, type Track, type TrackEndEvent, type TrackEndReason, type TrackExceptionEvent, type TrackInfo, type TrackStartEvent, type TrackStuckEvent, TrackSymbol, type TremoloFilter, type UnresolvedQuery, type UnresolvedSearchResult, type UnresolvedTrack, type UnresolvedTrackInfo, UnresolvedTrackSymbol, type VersionObject, type VibratoFilter, type VoiceEndpointProvider, type VoicePacket, type VoiceServer, type VoiceState, type WebSocketClosedEvent, type anyObject, audioOutputsData, averageRegionCoordinates, classifyVoiceEndpoint, getRegionFromVoiceEndpoint, getVoiceRegionCoordinates, haversineDistance, isTargetedStore, parseLavalinkConnUrl, queueTrackEnd, safeStringify, validSponsorBlocks };

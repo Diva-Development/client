@@ -29,6 +29,8 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 // src/index.ts
 var index_exports = {};
 __export(index_exports, {
+  AirportCoordinates: () => AirportCoordinates,
+  AirportRegions: () => AirportRegions,
   DebugEvents: () => DebugEvents,
   DefaultQueueStore: () => DefaultQueueStore,
   DefaultSources: () => DefaultSources,
@@ -37,6 +39,7 @@ __export(index_exports, {
   DiscordVoiceRegionCoordinates: () => DiscordVoiceRegionCoordinates,
   EQList: () => EQList,
   FilterManager: () => FilterManager,
+  KnownRegions: () => KnownRegions,
   LavalinkManager: () => LavalinkManager,
   LavalinkNode: () => LavalinkNode,
   LavalinkPlugins: () => LavalinkPlugins,
@@ -54,6 +57,7 @@ __export(index_exports, {
   UnresolvedTrackSymbol: () => UnresolvedTrackSymbol,
   audioOutputsData: () => audioOutputsData,
   averageRegionCoordinates: () => averageRegionCoordinates,
+  classifyVoiceEndpoint: () => classifyVoiceEndpoint,
   getRegionFromVoiceEndpoint: () => getRegionFromVoiceEndpoint,
   getVoiceRegionCoordinates: () => getVoiceRegionCoordinates,
   haversineDistance: () => haversineDistance,
@@ -391,6 +395,15 @@ var DiscordVoiceRegionCoordinates = {
   "eu-west": { lat: 53.35, lon: -6.26 },
   "eu-central": { lat: 50.11, lon: 8.68 },
   europe: { lat: 50.11, lon: 8.68 },
+  dublin: { lat: 53.35, lon: -6.26 },
+  france: { lat: 48.86, lon: 2.35 },
+  lisbon: { lat: 38.72, lon: -9.14 },
+  marseille: { lat: 43.3, lon: 5.37 },
+  brussels: { lat: 50.85, lon: 4.35 },
+  copenhagen: { lat: 55.68, lon: 12.57 },
+  vienna: { lat: 48.21, lon: 16.37 },
+  zurich: { lat: 47.38, lon: 8.54 },
+  turkey: { lat: 41.01, lon: 28.98 },
   // North America
   "us-east": { lat: 39.04, lon: -77.49 },
   "us-central": { lat: 41.88, lon: -87.63 },
@@ -402,21 +415,38 @@ var DiscordVoiceRegionCoordinates = {
   "santa-clara": { lat: 37.35, lon: -121.96 },
   seattle: { lat: 47.61, lon: -122.33 },
   montreal: { lat: 45.5, lon: -73.57 },
+  toronto: { lat: 43.65, lon: -79.38 },
+  oregon: { lat: 45.84, lon: -119.7 },
+  vancouver: { lat: 49.28, lon: -123.12 },
+  mexico: { lat: 19.43, lon: -99.13 },
   // South America
   brazil: { lat: -23.55, lon: -46.63 },
   "buenos-aires": { lat: -34.6, lon: -58.38 },
   santiago: { lat: -33.45, lon: -70.67 },
+  bogota: { lat: 4.71, lon: -74.07 },
+  lima: { lat: -12.05, lon: -77.04 },
   // Middle East / Africa
   dubai: { lat: 25.2, lon: 55.27 },
+  dammam: { lat: 26.43, lon: 50.1 },
   "tel-aviv": { lat: 32.07, lon: 34.78 },
   southafrica: { lat: -26.2, lon: 28.05 },
+  nigeria: { lat: 6.52, lon: 3.38 },
+  kenya: { lat: -1.29, lon: 36.82 },
   // Asia / Oceania
   india: { lat: 19.08, lon: 72.88 },
+  mumbai: { lat: 19.08, lon: 72.88 },
+  jakarta: { lat: -6.21, lon: 106.85 },
   singapore: { lat: 1.35, lon: 103.82 },
   hongkong: { lat: 22.32, lon: 114.17 },
   japan: { lat: 35.68, lon: 139.69 },
   "south-korea": { lat: 37.57, lon: 126.98 },
-  sydney: { lat: -33.87, lon: 151.21 }
+  sydney: { lat: -33.87, lon: 151.21 },
+  melbourne: { lat: -37.81, lon: 144.96 },
+  auckland: { lat: -36.85, lon: 174.76 },
+  taiwan: { lat: 25.03, lon: 121.57 },
+  thailand: { lat: 13.76, lon: 100.5 },
+  malaysia: { lat: 3.14, lon: 101.69 },
+  philippines: { lat: 14.6, lon: 120.98 }
 };
 var RegionAliases = {
   us: "us-central",
@@ -434,6 +464,7 @@ function getVoiceRegionCoordinates(region) {
   if (key.startsWith("vip-")) key = key.slice(4);
   if (DiscordVoiceRegionCoordinates[key]) return DiscordVoiceRegionCoordinates[key];
   if (RegionAliases[key]) return DiscordVoiceRegionCoordinates[RegionAliases[key]];
+  if (AirportCoordinates[key]) return AirportCoordinates[key];
   return void 0;
 }
 function haversineDistance(a, b) {
@@ -453,13 +484,213 @@ function averageRegionCoordinates(regions) {
   const sum = coords.reduce((acc, c) => ({ lat: acc.lat + c.lat, lon: acc.lon + c.lon }), { lat: 0, lon: 0 });
   return { lat: sum.lat / coords.length, lon: sum.lon / coords.length };
 }
+var AirportRegions = {
+  ams: "amsterdam",
+  arn: "stockholm",
+  atl: "atlanta",
+  bah: "dammam",
+  bom: "india",
+  cdg: "france",
+  cgk: "jakarta",
+  den: "us-central",
+  dfw: "us-central",
+  dub: "dublin",
+  dxb: "dubai",
+  ewr: "newark",
+  eze: "buenos-aires",
+  fra: "frankfurt",
+  gru: "brazil",
+  hel: "finland",
+  hkg: "hongkong",
+  iad: "us-east",
+  icn: "south-korea",
+  jnb: "southafrica",
+  lax: "us-west",
+  lhr: "london",
+  maa: "india",
+  mad: "madrid",
+  mia: "us-south",
+  mxp: "milan",
+  nrt: "japan",
+  ord: "us-central",
+  otp: "bucharest",
+  phx: "us-west",
+  rot: "rotterdam",
+  scl: "santiago",
+  sea: "seattle",
+  sin: "singapore",
+  sjc: "us-west",
+  svo: "russia",
+  syd: "sydney",
+  tlv: "tel-aviv",
+  waw: "warsaw",
+  yul: "montreal",
+  yyz: "toronto",
+  // --- additions beyond the server map: edges Discord may serve from, named so
+  // they can be claimed in a node's `regions` instead of surfacing as raw codes ---
+  yvr: "vancouver",
+  mex: "mexico",
+  iah: "us-south",
+  bog: "bogota",
+  lim: "lima",
+  gig: "brazil",
+  lis: "lisbon",
+  vie: "vienna",
+  zrh: "zurich",
+  ist: "turkey",
+  los: "nigeria",
+  nbo: "kenya",
+  cpt: "southafrica",
+  del: "india",
+  tpe: "taiwan",
+  bkk: "thailand",
+  kul: "malaysia",
+  mnl: "philippines",
+  mel: "melbourne",
+  akl: "auckland",
+  hnd: "japan",
+  kix: "japan",
+  tpa: "st-pete",
+  pdx: "oregon",
+  // observed in production telemetry, previously unnamed
+  mrs: "marseille",
+  bru: "brussels",
+  cph: "copenhagen"
+};
+var KnownRegions = /* @__PURE__ */ new Set([
+  "amsterdam",
+  "atlanta",
+  "brazil",
+  "bucharest",
+  "buenos-aires",
+  "dammam",
+  "dubai",
+  "dublin",
+  "eu-central",
+  "eu-west",
+  "europe",
+  "finland",
+  "france",
+  "frankfurt",
+  "hongkong",
+  "india",
+  "jakarta",
+  "japan",
+  "london",
+  "madrid",
+  "milan",
+  "montreal",
+  "mumbai",
+  "newark",
+  "oregon",
+  "rotterdam",
+  "russia",
+  "santiago",
+  "seattle",
+  "singapore",
+  "south-korea",
+  "southafrica",
+  "st-pete",
+  "stockholm",
+  "sydney",
+  "tel-aviv",
+  "toronto",
+  "us-central",
+  "us-east",
+  "us-south",
+  "us-west",
+  "warsaw"
+]);
+var RegionPattern = /^(?:c-)?([a-z]+(?:-[a-z]+)*?)\d*(?:-[0-9a-f]+)?$/;
+var BoundedToken = /^[a-z][a-z-]{1,20}$/;
+var AirportCoordinates = {
+  // North America
+  ewr: { lat: 40.69, lon: -74.17 },
+  iad: { lat: 38.95, lon: -77.46 },
+  atl: { lat: 33.64, lon: -84.43 },
+  ord: { lat: 41.98, lon: -87.9 },
+  dfw: { lat: 32.9, lon: -97.04 },
+  den: { lat: 39.86, lon: -104.67 },
+  mia: { lat: 25.79, lon: -80.29 },
+  tpa: { lat: 27.98, lon: -82.53 },
+  sea: { lat: 47.45, lon: -122.31 },
+  pdx: { lat: 45.59, lon: -122.6 },
+  sjc: { lat: 37.36, lon: -121.93 },
+  lax: { lat: 33.94, lon: -118.41 },
+  phx: { lat: 33.43, lon: -112.01 },
+  yul: { lat: 45.47, lon: -73.74 },
+  yyz: { lat: 43.68, lon: -79.63 },
+  yvr: { lat: 49.19, lon: -123.18 },
+  mex: { lat: 19.44, lon: -99.07 },
+  iah: { lat: 29.99, lon: -95.34 },
+  // South America
+  gru: { lat: -23.43, lon: -46.47 },
+  gig: { lat: -22.81, lon: -43.25 },
+  eze: { lat: -34.82, lon: -58.54 },
+  scl: { lat: -33.39, lon: -70.79 },
+  bog: { lat: 4.7, lon: -74.15 },
+  lim: { lat: -12.02, lon: -77.11 },
+  // Europe
+  fra: { lat: 50.04, lon: 8.56 },
+  ams: { lat: 52.31, lon: 4.76 },
+  rot: { lat: 51.96, lon: 4.44 },
+  lhr: { lat: 51.47, lon: -0.45 },
+  dub: { lat: 53.43, lon: -6.25 },
+  cdg: { lat: 49.01, lon: 2.55 },
+  mad: { lat: 40.47, lon: -3.56 },
+  mxp: { lat: 45.63, lon: 8.72 },
+  otp: { lat: 44.57, lon: 26.1 },
+  waw: { lat: 52.17, lon: 20.97 },
+  arn: { lat: 59.65, lon: 17.92 },
+  hel: { lat: 60.32, lon: 24.96 },
+  svo: { lat: 55.97, lon: 37.41 },
+  lis: { lat: 38.77, lon: -9.13 },
+  vie: { lat: 48.11, lon: 16.57 },
+  zrh: { lat: 47.46, lon: 8.55 },
+  // Middle East / Africa
+  dxb: { lat: 25.25, lon: 55.36 },
+  bah: { lat: 26.27, lon: 50.63 },
+  tlv: { lat: 32.01, lon: 34.89 },
+  jnb: { lat: -26.13, lon: 28.24 },
+  cpt: { lat: -33.97, lon: 18.6 },
+  los: { lat: 6.58, lon: 3.32 },
+  nbo: { lat: -1.32, lon: 36.93 },
+  ist: { lat: 41.28, lon: 28.75 },
+  // Asia / Oceania
+  bom: { lat: 19.09, lon: 72.87 },
+  maa: { lat: 12.99, lon: 80.17 },
+  del: { lat: 28.56, lon: 77.1 },
+  sin: { lat: 1.36, lon: 103.99 },
+  hkg: { lat: 22.31, lon: 113.91 },
+  cgk: { lat: -6.13, lon: 106.66 },
+  nrt: { lat: 35.77, lon: 140.39 },
+  hnd: { lat: 35.55, lon: 139.78 },
+  kix: { lat: 34.43, lon: 135.24 },
+  icn: { lat: 37.46, lon: 126.44 },
+  syd: { lat: -33.94, lon: 151.18 },
+  mel: { lat: -37.67, lon: 144.84 },
+  akl: { lat: -37.01, lon: 174.79 },
+  tpe: { lat: 25.08, lon: 121.23 },
+  bkk: { lat: 13.69, lon: 100.75 },
+  kul: { lat: 2.75, lon: 101.71 },
+  mnl: { lat: 14.51, lon: 121.02 }
+};
 function getRegionFromVoiceEndpoint(endpoint) {
-  if (!endpoint || typeof endpoint !== "string") return void 0;
-  const host = endpoint.replace(/^\w+:\/\//, "").split(":")[0]?.split("/")[0];
-  const label = host?.split(".")[0]?.toLowerCase();
-  if (!label) return void 0;
-  const region = label.replace(/\d+$/, "").replace(/-$/, "");
-  return region || void 0;
+  return classifyVoiceEndpoint(endpoint).region;
+}
+function classifyVoiceEndpoint(endpoint) {
+  if (!endpoint || typeof endpoint !== "string") return { region: void 0, provider: "unknown" };
+  const host = endpoint.trim().toLowerCase().replace(/^\w+:\/\//, "").split(":")[0]?.split("/")[0];
+  if (!host) return { region: void 0, provider: "unknown" };
+  const provider = host.endsWith(".discord.media") ? "cloudflare" : host.endsWith(".discord.gg") ? "discord" : "unknown";
+  const match = RegionPattern.exec(host.split(".")[0]);
+  if (!match) return { region: void 0, provider };
+  const token = match[1];
+  const iata = /^[a-z]{3}$/.test(token) ? token : void 0;
+  if (AirportRegions[token]) return { region: AirportRegions[token], provider, iata };
+  if (KnownRegions.has(token)) return { region: token, provider, iata };
+  if (BoundedToken.test(token)) return { region: token, provider, iata };
+  return { region: void 0, provider, iata };
 }
 
 // src/structures/Types/Node.ts
@@ -5861,6 +6092,8 @@ var LavalinkManager = class extends import_events2.EventEmitter {
 };
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
+  AirportCoordinates,
+  AirportRegions,
   DebugEvents,
   DefaultQueueStore,
   DefaultSources,
@@ -5869,6 +6102,7 @@ var LavalinkManager = class extends import_events2.EventEmitter {
   DiscordVoiceRegionCoordinates,
   EQList,
   FilterManager,
+  KnownRegions,
   LavalinkManager,
   LavalinkNode,
   LavalinkPlugins,
@@ -5886,6 +6120,7 @@ var LavalinkManager = class extends import_events2.EventEmitter {
   UnresolvedTrackSymbol,
   audioOutputsData,
   averageRegionCoordinates,
+  classifyVoiceEndpoint,
   getRegionFromVoiceEndpoint,
   getVoiceRegionCoordinates,
   haversineDistance,
