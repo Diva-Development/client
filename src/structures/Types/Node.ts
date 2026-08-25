@@ -32,6 +32,17 @@ export interface LavalinkNodeOptions {
      * If omitted, the coordinates are derived from `regions`.
      */
     coordinates?: { lat: number; lon: number };
+    /**
+     * Mark this node as the fallback for region-based routing.
+     *
+     * When a player's voice region can't be resolved to a node (region is
+     * "Automatic"/unknown, or no node has usable coordinates), the least-used
+     * connected node flagged `fallback` is chosen instead of the global
+     * least-used node. If several nodes set this, the least-used one wins.
+     * If no fallback node is connected, routing falls back to least-used.
+     * @default false
+     */
+    fallback?: boolean;
     /** The max amount of retries for this node. */
     retryAmount?: number;
     /** The delay of how often to retry a reconnection. */

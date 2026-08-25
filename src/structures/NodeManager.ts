@@ -192,7 +192,9 @@ export class NodeManager extends EventEmitter {
      *  1. **Exact region match** — the least-used connected node whose `regions` includes `vcRegion`.
      *  2. **Nearest by distance** — the connected node geographically closest to `vcRegion`
      *     (great-circle distance; ties broken by lowest load), when the region is known.
-     *  3. **Least-used fallback** — the least-used connected node (region unknown / no coordinates).
+     *  3. **Configured fallback node** — the least-used connected node with `fallback: true`
+     *     in its options (region unknown / no coordinates / no geo match).
+     *  4. **Least-used fallback** — the least-used connected node, if no fallback node is connected.
      *
      * @param vcRegion The voice channel region (e.g. `interaction.member.voice.rtcRegion`)
      * @param sortType How to measure "least used" for load-based ranking & tie-breaks
@@ -233,7 +235,11 @@ export class NodeManager extends EventEmitter {
             }
         }
 
-        // 3. least-used fallback
+        // 3. explicitly configured fallback node (least-used among them)
+        const fallback = nodes.find(node => node.options?.fallback === true);
+        if (fallback) return fallback;
+
+        // 4. least-used fallback
         return nodes[0] || null;
     }
 

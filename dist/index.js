@@ -54,6 +54,7 @@ __export(index_exports, {
   UnresolvedTrackSymbol: () => UnresolvedTrackSymbol,
   audioOutputsData: () => audioOutputsData,
   averageRegionCoordinates: () => averageRegionCoordinates,
+  getRegionFromVoiceEndpoint: () => getRegionFromVoiceEndpoint,
   getVoiceRegionCoordinates: () => getVoiceRegionCoordinates,
   haversineDistance: () => haversineDistance,
   isTargetedStore: () => isTargetedStore,
@@ -451,6 +452,14 @@ function averageRegionCoordinates(regions) {
   if (!coords.length) return void 0;
   const sum = coords.reduce((acc, c) => ({ lat: acc.lat + c.lat, lon: acc.lon + c.lon }), { lat: 0, lon: 0 });
   return { lat: sum.lat / coords.length, lon: sum.lon / coords.length };
+}
+function getRegionFromVoiceEndpoint(endpoint) {
+  if (!endpoint || typeof endpoint !== "string") return void 0;
+  const host = endpoint.replace(/^\w+:\/\//, "").split(":")[0]?.split("/")[0];
+  const label = host?.split(".")[0]?.toLowerCase();
+  if (!label) return void 0;
+  const region = label.replace(/\d+$/, "").replace(/-$/, "");
+  return region || void 0;
 }
 
 // src/structures/Types/Node.ts
@@ -2793,7 +2802,9 @@ var NodeManager = class extends import_events.EventEmitter {
    *  1. **Exact region match** — the least-used connected node whose `regions` includes `vcRegion`.
    *  2. **Nearest by distance** — the connected node geographically closest to `vcRegion`
    *     (great-circle distance; ties broken by lowest load), when the region is known.
-   *  3. **Least-used fallback** — the least-used connected node (region unknown / no coordinates).
+   *  3. **Configured fallback node** — the least-used connected node with `fallback: true`
+   *     in its options (region unknown / no coordinates / no geo match).
+   *  4. **Least-used fallback** — the least-used connected node, if no fallback node is connected.
    *
    * @param vcRegion The voice channel region (e.g. `interaction.member.voice.rtcRegion`)
    * @param sortType How to measure "least used" for load-based ranking & tie-breaks
@@ -2827,6 +2838,8 @@ var NodeManager = class extends import_events.EventEmitter {
         if (closest) return closest;
       }
     }
+    const fallback = nodes.find((node) => node.options?.fallback === true);
+    if (fallback) return fallback;
     return nodes[0] || null;
   }
   /**
@@ -5063,6 +5076,45 @@ var Player = class {
     return this.node.lyrics.unsubscribe(this.guildId);
   }
   /**
+   * Re-route this player to the optimal node for a region that was only learned
+   * at connect time (i.e. the voice channel's region is "Automatic", so
+   * `rtcRegion` was null when the player was created).
+   *
+   * Does nothing when the player already sits on the optimal node, when it is
+   * already playing (moving mid-track would interrupt audio), or when another
+   * node change is in flight. Failures are non-fatal — the player simply stays
+   * on its current node.
+   *
+   * @param region The region resolved from the VOICE_SERVER_UPDATE endpoint
+   * @returns The node id the player ended up on
+   */
+  async rerouteToRegion(region) {
+    if (this.playing || this.queue.current) return this.node.id;
+    if (this.get("internal_nodeChanging") === true) return this.node.id;
+    const optimal = this.LavalinkManager.nodeManager.getOptimalNode(region);
+    if (!optimal || optimal.id === this.node.id) return this.node.id;
+    if (this.LavalinkManager.options?.advancedOptions?.enableDebugEvents) {
+      this.LavalinkManager.emit("debug", "PlayerChangeNode" /* PlayerChangeNode */, {
+        state: "log",
+        message: `Auto voice region resolved to "${region}", re-routing player from "${this.node.id}" to "${optimal.id}"`,
+        functionLayer: "Player > rerouteToRegion()"
+      });
+    }
+    try {
+      return await this.changeNode(optimal);
+    } catch (error) {
+      if (this.LavalinkManager.options?.advancedOptions?.enableDebugEvents) {
+        this.LavalinkManager.emit("debug", "PlayerChangeNode" /* PlayerChangeNode */, {
+          state: "warn",
+          error,
+          message: `Failed to re-route player to "${optimal.id}" for resolved region "${region}", staying on "${this.node.id}"`,
+          functionLayer: "Player > rerouteToRegion()"
+        });
+      }
+      return this.node.id;
+    }
+  }
+  /**
    * Move the player on a different Audio-Node
    * @param newNode New Node / New Node Id
    * @param checkSources If it should check if the sources are supported by the new node @default true
@@ -5682,6 +5734,19 @@ var LavalinkManager = class extends import_events2.EventEmitter {
           });
           if (this.options?.advancedOptions?.debugOptions?.noAudio === true) console.debug("Lavalink-Client-Debug | NO-AUDIO [::] sendRawData function, Can't send updatePlayer for voice token session - Missing sessionId", { voice: { token: update.token, endpoint: update.endpoint, sessionId: sessionId2Use }, update, playerVoice: player.voice });
         } else {
+          player.voice.token = update.token;
+          player.voice.endpoint = update.endpoint;
+          player.voice.sessionId = sessionId2Use;
+          player.voice.channelId = update.channel_id || player.voice.channelId;
+          const resolvedRegion = getRegionFromVoiceEndpoint(update.endpoint);
+          if (resolvedRegion && resolvedRegion !== player.options.vcRegion) {
+            const hadRegion = !!player.options.vcRegion;
+            player.options.vcRegion = resolvedRegion;
+            if (!hadRegion || player.get("internal_regionAutoResolved") === true) {
+              player.set("internal_regionAutoResolved", true);
+              await player.rerouteToRegion(resolvedRegion);
+            }
+          }
           await player.node.updatePlayer({
             guildId: player.guildId,
             playerOptions: {
@@ -5821,6 +5886,7 @@ var LavalinkManager = class extends import_events2.EventEmitter {
   UnresolvedTrackSymbol,
   audioOutputsData,
   averageRegionCoordinates,
+  getRegionFromVoiceEndpoint,
   getVoiceRegionCoordinates,
   haversineDistance,
   isTargetedStore,

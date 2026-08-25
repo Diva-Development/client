@@ -121,3 +121,32 @@ export function averageRegionCoordinates(regions?: string[]): RegionCoordinates 
     const sum = coords.reduce((acc, c) => ({ lat: acc.lat + c.lat, lon: acc.lon + c.lon }), { lat: 0, lon: 0 });
     return { lat: sum.lat / coords.length, lon: sum.lon / coords.length };
 }
+
+/**
+ * Extract the Discord voice region id from a `VOICE_SERVER_UPDATE` endpoint.
+ *
+ * Discord endpoints look like `frankfurt1234.discord.media:443` — the first
+ * hostname label is the region id with a trailing shard number. This is the only
+ * way to learn the real region when the voice channel's `rtcRegion` is
+ * "Automatic" (`null`), since Discord only resolves it at connect time.
+ *
+ * Multi-word regions keep their dashes (`us-east1234` -> `us-east`).
+ *
+ * @param endpoint The endpoint string from VOICE_SERVER_UPDATE (port optional)
+ * @returns The region id, or undefined if it can't be parsed
+ *
+ * @example
+ * ```ts
+ * getRegionFromVoiceEndpoint("us-east1234.discord.media:443"); // "us-east"
+ * ```
+ */
+export function getRegionFromVoiceEndpoint(endpoint?: string | null): string | undefined {
+    if (!endpoint || typeof endpoint !== "string") return undefined;
+    // strip protocol + port, then take the first hostname label
+    const host = endpoint.replace(/^\w+:\/\//, "").split(":")[0]?.split("/")[0];
+    const label = host?.split(".")[0]?.toLowerCase();
+    if (!label) return undefined;
+    // trailing digits are the shard number, not part of the region id
+    const region = label.replace(/\d+$/, "").replace(/-$/, "");
+    return region || undefined;
+}

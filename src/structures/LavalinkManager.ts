@@ -4,6 +4,7 @@ import { DebugEvents, DestroyReasons } from "./Constants";
 import { NodeManager } from "./NodeManager";
 import { Player } from "./Player";
 import { DefaultQueueStore } from "./Queue";
+import { getRegionFromVoiceEndpoint } from "./Regions";
 import { ManagerUtils, MiniMap, safeStringify } from "./Utils";
 
 import type { LavalinkNodeOptions } from "./Types/Node";
@@ -522,6 +523,29 @@ export class LavalinkManager<CustomPlayerT extends Player = Player> extends Even
                     });
                     if (this.options?.advancedOptions?.debugOptions?.noAudio === true) console.debug("Lavalink-Client-Debug | NO-AUDIO [::] sendRawData function, Can't send updatePlayer for voice token session - Missing sessionId", { voice: { token: update.token, endpoint: update.endpoint, sessionId: sessionId2Use, }, update, playerVoice: player.voice });
                 } else {
+                    // persist the voice data so changeNode() (and re-routing below) has what it needs
+                    player.voice.token = update.token;
+                    player.voice.endpoint = update.endpoint;
+                    player.voice.sessionId = sessionId2Use;
+                    player.voice.channelId = update.channel_id || player.voice.channelId;
+
+                    // The channel's region may be "Automatic" (rtcRegion === null), in which case the
+                    // player was created without region info and routed purely by load. Discord only
+                    // reveals the resolved region here, in the endpoint hostname. This also fires again
+                    // whenever the region is changed mid-call, so keep the tracked region current and
+                    // re-route when it actually changed (rerouteToRegion no-ops if the player is busy).
+                    const resolvedRegion = getRegionFromVoiceEndpoint(update.endpoint);
+                    if (resolvedRegion && resolvedRegion !== player.options.vcRegion) {
+                        const hadRegion = !!player.options.vcRegion;
+                        player.options.vcRegion = resolvedRegion;
+                        // Only auto-route when the region was unset (auto) or previously auto-resolved;
+                        // never override a region the consumer set explicitly.
+                        if (!hadRegion || player.get("internal_regionAutoResolved") === true) {
+                            player.set("internal_regionAutoResolved", true);
+                            await player.rerouteToRegion(resolvedRegion);
+                        }
+                    }
+
                     await player.node.updatePlayer({
                         guildId: player.guildId,
                         playerOptions: {

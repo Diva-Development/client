@@ -819,6 +819,49 @@ export class Player {
     }
 
     /**
+     * Re-route this player to the optimal node for a region that was only learned
+     * at connect time (i.e. the voice channel's region is "Automatic", so
+     * `rtcRegion` was null when the player was created).
+     *
+     * Does nothing when the player already sits on the optimal node, when it is
+     * already playing (moving mid-track would interrupt audio), or when another
+     * node change is in flight. Failures are non-fatal — the player simply stays
+     * on its current node.
+     *
+     * @param region The region resolved from the VOICE_SERVER_UPDATE endpoint
+     * @returns The node id the player ended up on
+     */
+    public async rerouteToRegion(region: string): Promise<string> {
+        if (this.playing || this.queue.current) return this.node.id;
+        if (this.get("internal_nodeChanging") === true) return this.node.id;
+
+        const optimal = this.LavalinkManager.nodeManager.getOptimalNode(region);
+        if (!optimal || optimal.id === this.node.id) return this.node.id;
+
+        if (this.LavalinkManager.options?.advancedOptions?.enableDebugEvents) {
+            this.LavalinkManager.emit("debug", DebugEvents.PlayerChangeNode, {
+                state: "log",
+                message: `Auto voice region resolved to "${region}", re-routing player from "${this.node.id}" to "${optimal.id}"`,
+                functionLayer: "Player > rerouteToRegion()",
+            });
+        }
+
+        try {
+            return await this.changeNode(optimal);
+        } catch (error) {
+            if (this.LavalinkManager.options?.advancedOptions?.enableDebugEvents) {
+                this.LavalinkManager.emit("debug", DebugEvents.PlayerChangeNode, {
+                    state: "warn",
+                    error: error,
+                    message: `Failed to re-route player to "${optimal.id}" for resolved region "${region}", staying on "${this.node.id}"`,
+                    functionLayer: "Player > rerouteToRegion()",
+                });
+            }
+            return this.node.id;
+        }
+    }
+
+    /**
      * Move the player on a different Audio-Node
      * @param newNode New Node / New Node Id
      * @param checkSources If it should check if the sources are supported by the new node @default true
