@@ -6025,7 +6025,8 @@ var LavalinkManager = class extends EventEmitter2 {
           player.voice.channelId = update.channel_id || player.voice.channelId;
           let regionChange;
           const { region: resolvedRegion, iata } = classifyVoiceEndpoint(update.endpoint);
-          if (resolvedRegion && resolvedRegion !== player.options.vcRegion) {
+          if (resolvedRegion) {
+            const regionChanged = resolvedRegion !== player.options.vcRegion;
             const oldRegion = player.options.vcRegion ?? null;
             const oldNodeId = player.node.id;
             player.options.vcRegion = resolvedRegion;
@@ -6037,18 +6038,21 @@ var LavalinkManager = class extends EventEmitter2 {
               firstResolution: oldRegion === null,
               oldNodeId
             };
-            if (!oldRegion || player.get("internal_regionAutoResolved") === true) {
+            if (player.options.pinNode !== true) {
               player.set("internal_regionAutoResolved", true);
               const jitterMs = Math.floor(Math.random() * (this.options?.playerOptions?.rerouteJitterMs ?? 2e3));
               setTimeout(() => {
-                void player.rerouteToRegion(resolvedRegion).then((result) => this.emit("playerRegionChange", player, {
-                  ...base,
-                  movedNode: result.moved,
-                  newNodeId: result.nodeId,
-                  ...result.moved ? {} : { reason: result.reason }
-                })).catch(() => null);
+                void player.rerouteToRegion(resolvedRegion).then((result) => {
+                  if (!regionChanged && !result.moved) return;
+                  this.emit("playerRegionChange", player, {
+                    ...base,
+                    movedNode: result.moved,
+                    newNodeId: result.nodeId,
+                    ...result.moved ? {} : { reason: result.reason }
+                  });
+                }).catch(() => null);
               }, jitterMs).unref?.();
-            } else {
+            } else if (regionChanged) {
               regionChange = { ...base, movedNode: false, newNodeId: player.node.id, reason: "explicit-region" };
             }
           }

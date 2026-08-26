@@ -2155,6 +2155,12 @@ interface PlayerOptions {
     volume?: number;
     /** VC Region for node selections */
     vcRegion?: string;
+    /**
+     * Never auto-move this player between nodes. Set this when you deliberately pinned the
+     * player to a node and want it to stay there, even if its voice region says otherwise.
+     * @default false
+     */
+    pinNode?: boolean;
     /** if it should join deafened */
     selfDeaf?: boolean;
     /** If it should join muted */

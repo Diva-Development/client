@@ -548,7 +548,11 @@ export class LavalinkManager<CustomPlayerT extends Player = Player> extends Even
                     // re-route when it actually changed (rerouteToRegion no-ops if the player is busy).
                     let regionChange: Parameters<LavalinkManagerEvents<CustomPlayerT>["playerRegionChange"]>[1] | undefined;
                     const { region: resolvedRegion, iata } = classifyVoiceEndpoint(update.endpoint);
-                    if (resolvedRegion && resolvedRegion !== player.options.vcRegion) {
+                    // Run whenever we resolved a region - not only when it *changed*. A player whose
+                    // region was known all along can still be sitting on the wrong node (e.g. it was
+                    // created before the region was known, or on an explicitly-passed node).
+                    if (resolvedRegion) {
+                        const regionChanged = resolvedRegion !== player.options.vcRegion;
                         const oldRegion = player.options.vcRegion ?? null;
                         const oldNodeId = player.node.id;
                         player.options.vcRegion = resolvedRegion;
@@ -560,9 +564,10 @@ export class LavalinkManager<CustomPlayerT extends Player = Player> extends Even
                             oldNodeId,
                         };
 
-                        // Only auto-route when the region was unset (auto) or previously auto-resolved;
-                        // never override a region the consumer set explicitly.
-                        if (!oldRegion || player.get("internal_regionAutoResolved") === true) {
+                        // Auto-route unless the consumer explicitly opted out. A vcRegion passed at
+                        // creation is usually just Discord's rtcRegion forwarded through, not a
+                        // deliberate pin - and the endpoint is the authoritative source either way.
+                        if (player.options.pinNode !== true) {
                             player.set("internal_regionAutoResolved", true);
                             // Deferred, not awaited: a Discord edge migration hands thousands of players a
                             // new endpoint within the same second, and awaiting here would serialise that
@@ -571,15 +576,19 @@ export class LavalinkManager<CustomPlayerT extends Player = Player> extends Even
                             const jitterMs = Math.floor(Math.random() * (this.options?.playerOptions?.rerouteJitterMs ?? 2_000));
                             setTimeout(() => {
                                 void player.rerouteToRegion(resolvedRegion)
-                                    .then(result => this.emit("playerRegionChange", player, {
-                                        ...base,
-                                        movedNode: result.moved, newNodeId: result.nodeId,
-                                        ...(result.moved ? {} : { reason: result.reason }),
-                                    }))
+                                    .then(result => {
+                                        // stay quiet when nothing happened: same region, same node
+                                        if (!regionChanged && !result.moved) return;
+                                        this.emit("playerRegionChange", player, {
+                                            ...base,
+                                            movedNode: result.moved, newNodeId: result.nodeId,
+                                            ...(result.moved ? {} : { reason: result.reason }),
+                                        });
+                                    })
                                     .catch(() => null);
                             }, jitterMs).unref?.();
-                        } else {
-                            // consumer owns the region - report the change, but nothing moved
+                        } else if (regionChanged) {
+                            // pinned by the consumer - report the region change, but nothing moved
                             regionChange = { ...base, movedNode: false, newNodeId: player.node.id, reason: "explicit-region" };
                         }
                     }
