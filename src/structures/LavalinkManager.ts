@@ -548,6 +548,11 @@ export class LavalinkManager<CustomPlayerT extends Player = Player> extends Even
                     // whenever the region is changed mid-call, so keep the tracked region current and
                     // re-route when it actually changed (rerouteToRegion no-ops if the player is busy).
                     let regionChange: Parameters<LavalinkManagerEvents<CustomPlayerT>["playerRegionChange"]>[1] | undefined;
+                    // Scheduled only AFTER the voice payload below has been accepted: Lavalink's
+                    // updatePlayer is an upsert, so a reroute that races it would let the pending
+                    // PATCH re-create the player on the node we just moved away from - two nodes
+                    // holding one guild, and Discord evicts whichever connects second.
+                    let scheduleReroute: (() => void) | undefined;
                     const { region: resolvedRegion, iata } = classifyVoiceEndpoint(update.endpoint);
                     // Run whenever we resolved a region - not only when it *changed*. A player whose
                     // region was known all along can still be sitting on the wrong node (e.g. it was
@@ -574,20 +579,40 @@ export class LavalinkManager<CustomPlayerT extends Player = Player> extends Even
                             // new endpoint within the same second, and awaiting here would serialise that
                             // stampede through the raw-gateway handler. Jitter spreads the resulting
                             // changeNode REST calls so one node's bounded REST pool isn't flooded.
+                            scheduleReroute = () => {
                             const jitterMs = Math.floor(Math.random() * (this.options?.playerOptions?.rerouteJitterMs ?? 2_000));
-                            setTimeout(() => {
-                                void player.rerouteToRegion(resolvedRegion)
-                                    .then(result => {
-                                        // stay quiet when nothing happened: same region, same node
-                                        if (!regionChanged && !result.moved) return;
-                                        this.emit("playerRegionChange", player, {
-                                            ...base,
-                                            movedNode: result.moved, newNodeId: result.nodeId,
-                                            ...(result.moved ? {} : { reason: result.reason }),
-                                        });
-                                    })
-                                    .catch(() => null);
-                            }, jitterMs).unref?.();
+                                // Supersede any reroute still pending for this player: a guild can get
+                                // several VOICE_SERVER_UPDATEs in one second during an edge migration, and
+                                // overlapping jittered timers would fire out of order and bounce a playing
+                                // player between nodes, leaving it on the region it is NOT assigned to.
+                                const priorTimer = player.get("internal_rerouteTimer") as NodeJS.Timeout | undefined;
+                                if (priorTimer) clearTimeout(priorTimer);
+                                const rerouteGen = ((player.get("internal_rerouteGeneration") as number) ?? 0) + 1;
+                                player.set("internal_rerouteGeneration", rerouteGen);
+                                const timer = setTimeout(() => {
+                                    player.set("internal_rerouteTimer", undefined);
+                                    // a newer VOICE_SERVER_UPDATE already superseded this one
+                                    if (rerouteGen !== player.get("internal_rerouteGeneration")) return;
+                                    // the player may have been destroyed or left the channel during the
+                                    // jitter window - never act on a player that is no longer live
+                                    if (player.get("internal_destroystatus") === true) return;
+                                    if (!player.voiceChannelId) return;
+                                    if (!this.players.has(player.guildId)) return;
+                                    void player.rerouteToRegion(resolvedRegion)
+                                        .then(result => {
+                                            // stay quiet when nothing happened: same region, same node
+                                            if (!regionChanged && !result.moved) return;
+                                            this.emit("playerRegionChange", player, {
+                                                ...base,
+                                                movedNode: result.moved, newNodeId: result.nodeId,
+                                                ...(result.moved ? {} : { reason: result.reason }),
+                                            });
+                                        })
+                                        .catch(() => null);
+                                }, jitterMs);
+                                timer.unref?.();
+                                player.set("internal_rerouteTimer", timer);
+                            };
                         } else if (regionChanged) {
                             // pinned by the consumer - report the region change, but nothing moved
                             regionChange = { ...base, movedNode: false, newNodeId: player.node.id, reason: "explicit-region" };
@@ -617,6 +642,7 @@ export class LavalinkManager<CustomPlayerT extends Player = Player> extends Even
                     // emitted last, so the consumer sees a player whose node and voice state
                     // are both already settled
                     if (regionChange) this.emit("playerRegionChange", player, regionChange);
+                    scheduleReroute?.();
                 }
                 return
             }

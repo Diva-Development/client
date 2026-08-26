@@ -895,9 +895,12 @@ export class Player {
         if (this.get("internal_nodeChanging") === true) return;
         if (generation !== this.voiceHandshakeGeneration) return;
         // Never touch a player that is demonstrably fine. This watchdog exists for a handshake
-        // that never happened - if voice data is present or audio is flowing, the connection
-        // works and tearing it down would CAUSE the outage it is meant to detect.
-        if (this.voice.endpoint && this.voice.token && this.voice.sessionId) return;
+        // that never happened - if audio is flowing, the connection works and tearing it down
+        // would CAUSE the outage it is meant to detect.
+        // NOTE: deliberately NOT testing voice.endpoint/token/sessionId - those persist from the
+        // previous session across a reconnect, so testing them would make this dead code on every
+        // path except a brand-new player's first connect. The generation check above already
+        // invalidates a watchdog whose handshake landed.
         if (this.playing || this.connected) return;
 
         const opts = this.LavalinkManager.options?.playerOptions?.onVoiceTimeout;
@@ -915,7 +918,7 @@ export class Player {
             });
         }
 
-        if (attempts <= maxAttempts && (opts?.switchNode ?? true)) {
+        if (attempts < maxAttempts && (opts?.switchNode ?? true)) {
             const next = this.LavalinkManager.nodeManager.getOptimalNode(
                 this.options.vcRegion, "players", this.failedVoiceNodes,
             );
@@ -927,14 +930,20 @@ export class Player {
                     // no voice data yet, so changeNode() would throw - swap directly.
                     // Only tear down the old side when this player never established audio;
                     // guarded above, but re-checked here because of the awaits in between.
+                    // Re-check BEFORE the destructive call: a slow-but-healthy handshake can land
+                    // while we sit here, and deleting then would kill a player that just started
+                    // streaming. Checked again after, since the await is another window.
+                    if (generation !== this.voiceHandshakeGeneration || this.get("internal_destroystatus") === true) return;
                     if (this.node.connected && !this.playing && !this.connected) {
                         await this.node.destroyPlayer(this.guildId).catch(() => null);
                     }
-                    // re-check across the await: the handshake may have landed, or the player gone
                     if (generation !== this.voiceHandshakeGeneration || this.get("internal_destroystatus") === true) return;
                     this.node = next;
                     this.set("internal_nodeChanging", undefined);
-                    await this.connect();
+                    // arm explicitly: connect()'s default would re-arm on an op-4 that Discord
+                    // answers with nothing when the bot is already in the channel
+                    await this.connect(true);
+                    this.armVoiceHandshakeTimeout();
                     return;
                 } catch (error) {
                     if (this.LavalinkManager.options?.advancedOptions?.enableDebugEvents) {
@@ -1057,14 +1066,22 @@ export class Player {
             !this.voice.sessionId ||
             !this.voice.token)
             throw new Error("Voice Data is missing, can't change the node");
+        const oldNode = this.node;
         this.set("internal_nodeChanging", true); // This will stop execution of trackEnd or queueEnd event while changing the node
-        if (this.node.connected) await this.node.destroyPlayer(this.guildId); // destroy the player on the currentNode if it's connected
-        this.node = updateNode;
         const now = performance.now();
         try {
+            // Build the player on the new node FIRST, and only tear the old one down once the new
+            // side has accepted it. Destroying first means any failure below (REST hiccup, shard
+            // reconnecting, node info not yet fetched) leaves the player on no node at all - a
+            // permanently silent player with no recovery path.
+            this.node = updateNode;
             // node move, not a fresh handshake - see connect()
             await this.connect(true);
-            const hasSponsorBlock = this.node.info?.plugins?.find(v => v.name === "sponsorblock-plugin");
+            // node.connected only means the socket is open; info is fetched slightly later, and
+            // setSponsorBlock() dereferences this.info.plugins without a guard
+            const hasSponsorBlock = this.node.info?.plugins?.length
+                ? this.node.info.plugins.find(v => v.name === "sponsorblock-plugin")
+                : undefined;
                 if (hasSponsorBlock) {
                     const sponsorBlockCategories = this.get("internal_sponsorBlockCategories");
                     if (Array.isArray(sponsorBlockCategories) && sponsorBlockCategories.length) {
@@ -1109,15 +1126,22 @@ export class Player {
                     },
                 },
             });
+            // the new node now owns the player - safe to tear down the old side. Failure here is
+            // cosmetic (an orphaned player on the old node), never a reason to fail the move.
+            if (oldNode.connected && oldNode.id !== this.node.id) {
+                await oldNode.destroyPlayer(this.guildId).catch(() => null);
+            }
             this.filterManager.applyPlayerFilters(); // Apply filters to the new node
             this.ping.lavalink = Math.round((performance.now() - now) / 10) / 100;
             return this.node.id;
         } catch (error) {
+            // a failed move must be a no-op, not an outage: the old node still holds the player
+            this.node = oldNode;
             if (this.LavalinkManager.options?.advancedOptions?.enableDebugEvents) {
                 this.LavalinkManager.emit("debug", DebugEvents.PlayerChangeNode, {
                     state: "error",
                     error: error,
-                    message: `Player.changeNode() execution failed`,
+                    message: `Player.changeNode() execution failed, staying on "${oldNode.id}"`,
                     functionLayer: "Player > changeNode()",
                 });
             }

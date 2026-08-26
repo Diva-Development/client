@@ -5376,7 +5376,6 @@ var Player = class {
     if (!this.voiceChannelId) return;
     if (this.get("internal_nodeChanging") === true) return;
     if (generation !== this.voiceHandshakeGeneration) return;
-    if (this.voice.endpoint && this.voice.token && this.voice.sessionId) return;
     if (this.playing || this.connected) return;
     const opts = this.LavalinkManager.options?.playerOptions?.onVoiceTimeout;
     const maxAttempts = opts?.maxAttempts ?? 2;
@@ -5390,7 +5389,7 @@ var Player = class {
         functionLayer: "Player > onVoiceHandshakeTimeout()"
       });
     }
-    if (attempts <= maxAttempts && (opts?.switchNode ?? true)) {
+    if (attempts < maxAttempts && (opts?.switchNode ?? true)) {
       const next = this.LavalinkManager.nodeManager.getOptimalNode(
         this.options.vcRegion,
         "players",
@@ -5399,13 +5398,15 @@ var Player = class {
       if (next && next.id !== this.node.id) {
         this.set("internal_nodeChanging", true);
         try {
+          if (generation !== this.voiceHandshakeGeneration || this.get("internal_destroystatus") === true) return;
           if (this.node.connected && !this.playing && !this.connected) {
             await this.node.destroyPlayer(this.guildId).catch(() => null);
           }
           if (generation !== this.voiceHandshakeGeneration || this.get("internal_destroystatus") === true) return;
           this.node = next;
           this.set("internal_nodeChanging", void 0);
-          await this.connect();
+          await this.connect(true);
+          this.armVoiceHandshakeTimeout();
           return;
         } catch (error) {
           if (this.LavalinkManager.options?.advancedOptions?.enableDebugEvents) {
@@ -5514,13 +5515,13 @@ var Player = class {
     const currentTrack = this.queue.current;
     if (!this.voice.endpoint || !this.voice.sessionId || !this.voice.token)
       throw new Error("Voice Data is missing, can't change the node");
+    const oldNode = this.node;
     this.set("internal_nodeChanging", true);
-    if (this.node.connected) await this.node.destroyPlayer(this.guildId);
-    this.node = updateNode;
     const now = performance.now();
     try {
+      this.node = updateNode;
       await this.connect(true);
-      const hasSponsorBlock = this.node.info?.plugins?.find((v) => v.name === "sponsorblock-plugin");
+      const hasSponsorBlock = this.node.info?.plugins?.length ? this.node.info.plugins.find((v) => v.name === "sponsorblock-plugin") : void 0;
       if (hasSponsorBlock) {
         const sponsorBlockCategories = this.get("internal_sponsorBlockCategories");
         if (Array.isArray(sponsorBlockCategories) && sponsorBlockCategories.length) {
@@ -5565,15 +5566,19 @@ var Player = class {
           }
         }
       });
+      if (oldNode.connected && oldNode.id !== this.node.id) {
+        await oldNode.destroyPlayer(this.guildId).catch(() => null);
+      }
       this.filterManager.applyPlayerFilters();
       this.ping.lavalink = Math.round((performance.now() - now) / 10) / 100;
       return this.node.id;
     } catch (error) {
+      this.node = oldNode;
       if (this.LavalinkManager.options?.advancedOptions?.enableDebugEvents) {
         this.LavalinkManager.emit("debug", "PlayerChangeNode" /* PlayerChangeNode */, {
           state: "error",
           error,
-          message: `Player.changeNode() execution failed`,
+          message: `Player.changeNode() execution failed, staying on "${oldNode.id}"`,
           functionLayer: "Player > changeNode()"
         });
       }
@@ -6102,6 +6107,7 @@ var LavalinkManager = class extends import_events2.EventEmitter {
           player.voice.sessionId = sessionId2Use;
           player.voice.channelId = update.channel_id || player.voice.channelId;
           let regionChange;
+          let scheduleReroute;
           const { region: resolvedRegion, iata } = classifyVoiceEndpoint(update.endpoint);
           if (resolvedRegion) {
             const regionChanged = resolvedRegion !== player.options.vcRegion;
@@ -6118,18 +6124,31 @@ var LavalinkManager = class extends import_events2.EventEmitter {
             };
             if (player.options.pinNode !== true) {
               player.set("internal_regionAutoResolved", true);
-              const jitterMs = Math.floor(Math.random() * (this.options?.playerOptions?.rerouteJitterMs ?? 2e3));
-              setTimeout(() => {
-                void player.rerouteToRegion(resolvedRegion).then((result) => {
-                  if (!regionChanged && !result.moved) return;
-                  this.emit("playerRegionChange", player, {
-                    ...base,
-                    movedNode: result.moved,
-                    newNodeId: result.nodeId,
-                    ...result.moved ? {} : { reason: result.reason }
-                  });
-                }).catch(() => null);
-              }, jitterMs).unref?.();
+              scheduleReroute = () => {
+                const jitterMs = Math.floor(Math.random() * (this.options?.playerOptions?.rerouteJitterMs ?? 2e3));
+                const priorTimer = player.get("internal_rerouteTimer");
+                if (priorTimer) clearTimeout(priorTimer);
+                const rerouteGen = (player.get("internal_rerouteGeneration") ?? 0) + 1;
+                player.set("internal_rerouteGeneration", rerouteGen);
+                const timer = setTimeout(() => {
+                  player.set("internal_rerouteTimer", void 0);
+                  if (rerouteGen !== player.get("internal_rerouteGeneration")) return;
+                  if (player.get("internal_destroystatus") === true) return;
+                  if (!player.voiceChannelId) return;
+                  if (!this.players.has(player.guildId)) return;
+                  void player.rerouteToRegion(resolvedRegion).then((result) => {
+                    if (!regionChanged && !result.moved) return;
+                    this.emit("playerRegionChange", player, {
+                      ...base,
+                      movedNode: result.moved,
+                      newNodeId: result.nodeId,
+                      ...result.moved ? {} : { reason: result.reason }
+                    });
+                  }).catch(() => null);
+                }, jitterMs);
+                timer.unref?.();
+                player.set("internal_rerouteTimer", timer);
+              };
             } else if (regionChanged) {
               regionChange = { ...base, movedNode: false, newNodeId: player.node.id, reason: "explicit-region" };
             }
@@ -6154,6 +6173,7 @@ var LavalinkManager = class extends import_events2.EventEmitter {
           }
           if (this.options?.advancedOptions?.debugOptions?.noAudio === true) console.debug("Lavalink-Client-Debug | NO-AUDIO [::] sendRawData function, Sent updatePlayer for voice token session", { voice: { token: update.token, endpoint: update.endpoint, sessionId: sessionId2Use }, playerVoice: player.voice, update });
           if (regionChange) this.emit("playerRegionChange", player, regionChange);
+          scheduleReroute?.();
         }
         return;
       }
