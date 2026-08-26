@@ -4,7 +4,7 @@ import { DebugEvents, DestroyReasons } from "./Constants";
 import { NodeManager } from "./NodeManager";
 import { Player } from "./Player";
 import { DefaultQueueStore } from "./Queue";
-import { getRegionFromVoiceEndpoint } from "./Regions";
+import { classifyVoiceEndpoint } from "./Regions";
 import { ManagerUtils, MiniMap, safeStringify } from "./Utils";
 
 import type { LavalinkNodeOptions } from "./Types/Node";
@@ -101,10 +101,17 @@ export class LavalinkManager<CustomPlayerT extends Player = Player> extends Even
                     autoReconnect: options?.playerOptions?.onDisconnect?.autoReconnect ?? false,
                     autoReconnectOnlyWithTracks: options?.playerOptions?.onDisconnect?.autoReconnectOnlyWithTracks ?? false,
                 },
+                onVoiceTimeout: {
+                    timeoutMs: options?.playerOptions?.onVoiceTimeout?.timeoutMs ?? 15_000,
+                    switchNode: options?.playerOptions?.onVoiceTimeout?.switchNode ?? true,
+                    maxAttempts: options?.playerOptions?.onVoiceTimeout?.maxAttempts ?? 2,
+                    destroyOnFail: options?.playerOptions?.onVoiceTimeout?.destroyOnFail ?? false,
+                },
                 onEmptyQueue: {
                     autoPlayFunction: options?.playerOptions?.onEmptyQueue?.autoPlayFunction ?? null,
                     destroyAfterMs: options?.playerOptions?.onEmptyQueue?.destroyAfterMs ?? undefined
                 },
+                rerouteJitterMs: options?.playerOptions?.rerouteJitterMs ?? 2_000,
                 volumeDecrementer: options?.playerOptions?.volumeDecrementer ?? 1,
                 requesterTransformer: options?.playerOptions?.requesterTransformer ?? null,
                 useUnresolvedData: options?.playerOptions?.useUnresolvedData ?? false,
@@ -523,6 +530,11 @@ export class LavalinkManager<CustomPlayerT extends Player = Player> extends Even
                     });
                     if (this.options?.advancedOptions?.debugOptions?.noAudio === true) console.debug("Lavalink-Client-Debug | NO-AUDIO [::] sendRawData function, Can't send updatePlayer for voice token session - Missing sessionId", { voice: { token: update.token, endpoint: update.endpoint, sessionId: sessionId2Use, }, update, playerVoice: player.voice });
                 } else {
+                    // handshake completed - stand the watchdog down and forget past failures,
+                    // so blame is per-connect-episode rather than per player lifetime
+                    player.clearVoiceHandshakeTimeout();
+                    player.resetVoiceFailureState();
+
                     // persist the voice data so changeNode() (and re-routing below) has what it needs
                     player.voice.token = update.token;
                     player.voice.endpoint = update.endpoint;
@@ -534,15 +546,41 @@ export class LavalinkManager<CustomPlayerT extends Player = Player> extends Even
                     // reveals the resolved region here, in the endpoint hostname. This also fires again
                     // whenever the region is changed mid-call, so keep the tracked region current and
                     // re-route when it actually changed (rerouteToRegion no-ops if the player is busy).
-                    const resolvedRegion = getRegionFromVoiceEndpoint(update.endpoint);
+                    let regionChange: Parameters<LavalinkManagerEvents<CustomPlayerT>["playerRegionChange"]>[1] | undefined;
+                    const { region: resolvedRegion, iata } = classifyVoiceEndpoint(update.endpoint);
                     if (resolvedRegion && resolvedRegion !== player.options.vcRegion) {
-                        const hadRegion = !!player.options.vcRegion;
+                        const oldRegion = player.options.vcRegion ?? null;
+                        const oldNodeId = player.node.id;
                         player.options.vcRegion = resolvedRegion;
+
+                        const base = {
+                            oldRegion, newRegion: resolvedRegion, iata,
+                            endpoint: update.endpoint,
+                            firstResolution: oldRegion === null,
+                            oldNodeId,
+                        };
+
                         // Only auto-route when the region was unset (auto) or previously auto-resolved;
                         // never override a region the consumer set explicitly.
-                        if (!hadRegion || player.get("internal_regionAutoResolved") === true) {
+                        if (!oldRegion || player.get("internal_regionAutoResolved") === true) {
                             player.set("internal_regionAutoResolved", true);
-                            await player.rerouteToRegion(resolvedRegion);
+                            // Deferred, not awaited: a Discord edge migration hands thousands of players a
+                            // new endpoint within the same second, and awaiting here would serialise that
+                            // stampede through the raw-gateway handler. Jitter spreads the resulting
+                            // changeNode REST calls so one node's bounded REST pool isn't flooded.
+                            const jitterMs = Math.floor(Math.random() * (this.options?.playerOptions?.rerouteJitterMs ?? 2_000));
+                            setTimeout(() => {
+                                void player.rerouteToRegion(resolvedRegion)
+                                    .then(result => this.emit("playerRegionChange", player, {
+                                        ...base,
+                                        movedNode: result.moved, newNodeId: result.nodeId,
+                                        ...(result.moved ? {} : { reason: result.reason }),
+                                    }))
+                                    .catch(() => null);
+                            }, jitterMs).unref?.();
+                        } else {
+                            // consumer owns the region - report the change, but nothing moved
+                            regionChange = { ...base, movedNode: false, newNodeId: player.node.id, reason: "explicit-region" };
                         }
                     }
 
@@ -565,6 +603,10 @@ export class LavalinkManager<CustomPlayerT extends Player = Player> extends Even
                         })
                     }
                     if (this.options?.advancedOptions?.debugOptions?.noAudio === true) console.debug("Lavalink-Client-Debug | NO-AUDIO [::] sendRawData function, Sent updatePlayer for voice token session", { voice: { token: update.token, endpoint: update.endpoint, sessionId: sessionId2Use, }, playerVoice: player.voice, update });
+
+                    // emitted last, so the consumer sees a player whose node and voice state
+                    // are both already settled
+                    if (regionChange) this.emit("playerRegionChange", player, regionChange);
                 }
                 return
             }

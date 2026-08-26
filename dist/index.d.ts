@@ -1183,6 +1183,43 @@ declare class Player {
      * ```
      */
     unsubscribeLyrics(): Promise<void>;
+    /** Timer that fires if Discord never completes the voice handshake. */
+    private voiceHandshakeTimeout?;
+    /** Node ids that already failed to complete a voice handshake for this player. */
+    private failedVoiceNodes;
+    /**
+     * Incremented on every arm/clear of the voice watchdog. A timeout callback compares the
+     * generation it captured against this; a mismatch means the handshake it was watching is
+     * already resolved or superseded, so the callback is stale and must do nothing.
+     * (Testing `voice.endpoint` instead would break on reconnects, where a stale endpoint from
+     * the previous session is still set.)
+     */
+    private voiceHandshakeGeneration;
+    /**
+     * Arm the voice-handshake watchdog.
+     *
+     * `connect()` only fires the gateway op-4 and returns - Discord may never answer
+     * with a VOICE_SERVER_UPDATE (dead edge, gateway hiccup, bad node), leaving the
+     * player silently stuck with no audio and no error. If nothing arrives in time,
+     * {@link onVoiceHandshakeTimeout} moves the player to another node and retries.
+     *
+     * Cleared by {@link clearVoiceHandshakeTimeout} as soon as the handshake lands.
+     */
+    armVoiceHandshakeTimeout(): void;
+    /** Cancel the voice-handshake watchdog (handshake completed, or player is going away). */
+    clearVoiceHandshakeTimeout(): void;
+    /**
+     * Forget which nodes failed a handshake and how many attempts were spent.
+     * Called on a successful handshake so blame is per-connect-episode, not per player
+     * lifetime - otherwise one transient slow handshake poisons routing forever.
+     */
+    resetVoiceFailureState(): void;
+    /**
+     * Handle a voice handshake that never completed: blame the current node, move to
+     * the next best one that hasn't failed yet, and retry. Destroys the player once
+     * every attempt is exhausted (unless `destroyOnFail` is disabled).
+     */
+    private onVoiceHandshakeTimeout;
     /**
      * Re-route this player to the optimal node for a region that was only learned
      * at connect time (i.e. the voice channel's region is "Automatic", so
@@ -1194,9 +1231,13 @@ declare class Player {
      * on its current node.
      *
      * @param region The region resolved from the VOICE_SERVER_UPDATE endpoint
-     * @returns The node id the player ended up on
+     * @returns The node id the player ended up on, and why it did not move (if it didn't)
      */
-    rerouteToRegion(region: string): Promise<string>;
+    rerouteToRegion(region: string): Promise<{
+        nodeId: string;
+        moved: boolean;
+        reason?: "already-optimal" | "playing" | "changing" | "failed";
+    }>;
     /**
      * Move the player on a different Audio-Node
      * @param newNode New Node / New Node Id
@@ -3065,6 +3106,8 @@ declare class NodeManager extends EventEmitter {
      *
      * @param vcRegion The voice channel region (e.g. `interaction.member.voice.rtcRegion`)
      * @param sortType How to measure "least used" for load-based ranking & tie-breaks
+     * @param excludeNodeIds Node ids to skip (e.g. ones that already failed to connect).
+     *                       Ignored if excluding them would leave no node at all.
      * @returns The chosen node, or null if no node is connected
      *
      * @example
@@ -3072,7 +3115,7 @@ declare class NodeManager extends EventEmitter {
      * const node = client.lavalink.nodeManager.getOptimalNode(voiceChannel.rtcRegion);
      * ```
      */
-    getOptimalNode(vcRegion?: string | null, sortType?: "memory" | "cpuLavalink" | "cpuSystem" | "calls" | "playingPlayers" | "players"): LavalinkNode | null;
+    getOptimalNode(vcRegion?: string | null, sortType?: "memory" | "cpuLavalink" | "cpuSystem" | "calls" | "playingPlayers" | "players", excludeNodeIds?: string[] | Set<string>): LavalinkNode | null;
     /**
      * Delete a node from the nodeManager and destroy it
      * @param node The node to delete
@@ -3201,6 +3244,54 @@ interface LavalinkManagerEvents<CustomPlayerT extends Player = Player> {
      */
     "playerVoiceLeave": (player: CustomPlayerT, userId: string) => void;
     /**
+     * Emitted when Discord never completed the voice handshake and every retry node
+     * was exhausted. The player is destroyed right after (unless `destroyOnFail`
+     * is disabled).
+     * @event Manager#playerVoiceTimeout
+     */
+    "playerVoiceTimeout": (player: CustomPlayerT, lastNodeId: string, attempts: number) => void;
+    /**
+     * Emitted when the player's resolved voice region changes - on first resolution of an
+     * "Automatic" region, and whenever someone changes the channel's region afterwards.
+     *
+     * `movedNode` tells you whether the player actually changed node: it is false when the
+     * current node was already optimal, or when the player was mid-track (moving would cut
+     * audio, so the region is recorded but the node is kept).
+     *
+     * @event Manager#playerRegionChange
+     * @example
+     * ```ts
+     * client.lavalink.on("playerRegionChange", (player, { firstResolution, newRegion, movedNode, newNodeId }) => {
+     *   if (firstResolution || !movedNode) return; // not a real change, or nothing moved
+     *   channel.send(`Voice region changed to ${newRegion} - routed you to ${newNodeId}, the closest server.`);
+     * });
+     * ```
+     */
+    "playerRegionChange": (player: CustomPlayerT, data: {
+        /** The previously known region, or null if this is the first resolution. */
+        oldRegion: string | null;
+        /** The newly resolved region (e.g. "newark"). */
+        newRegion: string;
+        /**
+         * True when this is the FIRST time the region was resolved for this player - i.e. the
+         * channel's region is "Automatic" and the player just connected. This is not a region
+         * *change*; skip it when messaging users, or every join produces a notification.
+         */
+        firstResolution: boolean;
+        /** Airport code the region came from, when the endpoint used the Cloudflare format. */
+        iata?: string;
+        /** The raw VOICE_SERVER_UPDATE endpoint the region was parsed from. */
+        endpoint: string;
+        /** Whether the player was actually moved to a different node. */
+        movedNode: boolean;
+        /** Node the player is on after handling the change. */
+        newNodeId: string;
+        /** Node the player was on before. Equals `newNodeId` when `movedNode` is false. */
+        oldNodeId: string;
+        /** Why the node was not changed, when `movedNode` is false. */
+        reason?: "already-optimal" | "playing" | "explicit-region" | "changing" | "failed";
+    }) => void;
+    /**
      * SPONSORBLOCK-PLUGIN EVENT
      * Emitted when Segments are loaded
      * @link https://github.com/topi314/Sponsorblock-Plugin#segmentsloaded
@@ -3291,6 +3382,34 @@ interface ManagerPlayerOptions<CustomPlayerT extends Player = Player> {
     applyVolumeAsFilter?: boolean;
     /** Transforms the saved data of a requested user */
     requesterTransformer?: (requester: unknown) => unknown;
+    /**
+     * Max random delay before re-routing a player after its voice region resolves.
+     * Discord migrates a whole edge at once, so without jitter thousands of players
+     * would fire changeNode() REST calls in the same second. @default 2000
+     */
+    rerouteJitterMs?: number;
+    /**
+     * What to do when Discord never completes the voice handshake after connect().
+     *
+     * `connect()` only fires the gateway op-4 and returns; if no VOICE_SERVER_UPDATE
+     * arrives the player is silently stuck with no audio and no error. This watchdog
+     * detects that and moves the player to another node before giving up.
+     */
+    onVoiceTimeout?: {
+        /** How long to wait for VOICE_SERVER_UPDATE before acting. <= 0 disables. @default 15000 */
+        timeoutMs?: number;
+        /** Move the player to a different node and retry the handshake. @default true */
+        switchNode?: boolean;
+        /** How many nodes to try before giving up. @default 2 */
+        maxAttempts?: number;
+        /**
+         * Destroy the player once every attempt failed. Off by default: a slow-but-healthy
+         * handshake should never cost the user their player. Leaves the player alive on the
+         * last node tried, and emits `playerVoiceTimeout` either way.
+         * @default false
+         */
+        destroyOnFail?: boolean;
+    };
     /** What lavalink-client should do when the player reconnects */
     onDisconnect?: {
         /** Try to reconnect? -> If fails -> Destroy */

@@ -1,10 +1,9 @@
-import { DebugEvents } from "./Constants";
+import { DebugEvents, DestroyReasons } from "./Constants";
 import { bandCampSearch } from "./CustomSearches/BandCampSearch";
 import { FilterManager } from "./Filters";
 import { Queue, QueueSaver } from "./Queue";
 import { queueTrackEnd } from "./Utils";
 
-import type { DestroyReasons } from "./Constants";
 import type { Track, UnresolvedTrack } from "./Types/Track";
 import type { LavalinkNode } from "./Node";
 import type { SponsorBlockSegment } from "./Types/Node";
@@ -674,6 +673,9 @@ export class Player {
 
         this.voiceChannelId = this.options.voiceChannelId;
 
+        // Discord may never answer the op-4; watch for that instead of hanging silently
+        this.armVoiceHandshakeTimeout();
+
         return this;
     }
 
@@ -748,6 +750,7 @@ export class Player {
             return;
         }
         this.set("internal_destroystatus", true);
+        this.clearVoiceHandshakeTimeout();
         // disconnect player and set VoiceChannel to Null
         if (disconnect) await this.disconnect(true);
         else this.set("internal_destroywithoutdisconnect", true);
@@ -818,6 +821,132 @@ export class Player {
         return this.node.lyrics.unsubscribe(this.guildId);
     }
 
+    /** Timer that fires if Discord never completes the voice handshake. */
+    private voiceHandshakeTimeout?: NodeJS.Timeout;
+    /** Node ids that already failed to complete a voice handshake for this player. */
+    private failedVoiceNodes: Set<string> = new Set();
+    /**
+     * Incremented on every arm/clear of the voice watchdog. A timeout callback compares the
+     * generation it captured against this; a mismatch means the handshake it was watching is
+     * already resolved or superseded, so the callback is stale and must do nothing.
+     * (Testing `voice.endpoint` instead would break on reconnects, where a stale endpoint from
+     * the previous session is still set.)
+     */
+    private voiceHandshakeGeneration = 0;
+
+    /**
+     * Arm the voice-handshake watchdog.
+     *
+     * `connect()` only fires the gateway op-4 and returns - Discord may never answer
+     * with a VOICE_SERVER_UPDATE (dead edge, gateway hiccup, bad node), leaving the
+     * player silently stuck with no audio and no error. If nothing arrives in time,
+     * {@link onVoiceHandshakeTimeout} moves the player to another node and retries.
+     *
+     * Cleared by {@link clearVoiceHandshakeTimeout} as soon as the handshake lands.
+     */
+    public armVoiceHandshakeTimeout(): void {
+        const opts = this.LavalinkManager.options?.playerOptions?.onVoiceTimeout;
+        const timeoutMs = opts?.timeoutMs ?? 10_000;
+        if (!(timeoutMs > 0)) return;
+
+        this.clearVoiceHandshakeTimeout();
+        const generation = ++this.voiceHandshakeGeneration;
+        this.voiceHandshakeTimeout = setTimeout(() => {
+            this.voiceHandshakeTimeout = undefined;
+            if (generation !== this.voiceHandshakeGeneration) return; // superseded
+            void this.onVoiceHandshakeTimeout(generation);
+        }, timeoutMs);
+        // never keep the process alive just for this watchdog
+        this.voiceHandshakeTimeout.unref?.();
+    }
+
+    /** Cancel the voice-handshake watchdog (handshake completed, or player is going away). */
+    public clearVoiceHandshakeTimeout(): void {
+        // bump unconditionally: a callback already queued on the event loop must be
+        // invalidated even when the timer handle itself is gone
+        this.voiceHandshakeGeneration++;
+        if (!this.voiceHandshakeTimeout) return;
+        clearTimeout(this.voiceHandshakeTimeout);
+        this.voiceHandshakeTimeout = undefined;
+    }
+
+    /**
+     * Forget which nodes failed a handshake and how many attempts were spent.
+     * Called on a successful handshake so blame is per-connect-episode, not per player
+     * lifetime - otherwise one transient slow handshake poisons routing forever.
+     */
+    public resetVoiceFailureState(): void {
+        this.failedVoiceNodes.clear();
+        this.set("internal_voiceTimeoutAttempts", undefined);
+    }
+
+    /**
+     * Handle a voice handshake that never completed: blame the current node, move to
+     * the next best one that hasn't failed yet, and retry. Destroys the player once
+     * every attempt is exhausted (unless `destroyOnFail` is disabled).
+     */
+    private async onVoiceHandshakeTimeout(generation: number): Promise<void> {
+        // a destroy, a disconnect, or a node change in flight makes this moot
+        if (this.get("internal_destroystatus") === true) return;
+        if (!this.voiceChannelId) return;
+        if (this.get("internal_nodeChanging") === true) return;
+        if (generation !== this.voiceHandshakeGeneration) return;
+
+        const opts = this.LavalinkManager.options?.playerOptions?.onVoiceTimeout;
+        const maxAttempts = opts?.maxAttempts ?? 2;
+        const attempts = (this.get("internal_voiceTimeoutAttempts") as number ?? 0) + 1;
+        this.set("internal_voiceTimeoutAttempts", attempts);
+
+        this.failedVoiceNodes.add(this.node.id);
+
+        if (this.LavalinkManager.options?.advancedOptions?.enableDebugEvents) {
+            this.LavalinkManager.emit("debug", DebugEvents.PlayerChangeNode, {
+                state: "warn",
+                message: `No VOICE_SERVER_UPDATE within ${opts?.timeoutMs ?? 10_000}ms on node "${this.node.id}" (attempt ${attempts}/${maxAttempts})`,
+                functionLayer: "Player > onVoiceHandshakeTimeout()",
+            });
+        }
+
+        if (attempts <= maxAttempts && (opts?.switchNode ?? true)) {
+            const next = this.LavalinkManager.nodeManager.getOptimalNode(
+                this.options.vcRegion, "players", this.failedVoiceNodes,
+            );
+            // only worth retrying elsewhere - the same node just failed us
+            if (next && next.id !== this.node.id) {
+                // take the same mutex changeNode() uses, so the two can't both write this.node
+                this.set("internal_nodeChanging", true);
+                try {
+                    // no voice data yet, so changeNode() would throw - swap directly
+                    if (this.node.connected) await this.node.destroyPlayer(this.guildId).catch(() => null);
+                    // re-check across the await: the handshake may have landed, or the player gone
+                    if (generation !== this.voiceHandshakeGeneration || this.get("internal_destroystatus") === true) return;
+                    this.node = next;
+                    this.set("internal_nodeChanging", undefined);
+                    await this.connect();
+                    return;
+                } catch (error) {
+                    if (this.LavalinkManager.options?.advancedOptions?.enableDebugEvents) {
+                        this.LavalinkManager.emit("debug", DebugEvents.PlayerChangeNode, {
+                            state: "error",
+                            error: error,
+                            message: `Failed to retry voice handshake on node "${next.id}"`,
+                            functionLayer: "Player > onVoiceHandshakeTimeout()",
+                        });
+                    }
+                } finally {
+                    this.set("internal_nodeChanging", undefined);
+                }
+            }
+        }
+
+        // always signal, even when we leave the player alive - otherwise a stuck player
+        // is invisible in the default (non-destroying) configuration
+        this.LavalinkManager.emit("playerVoiceTimeout", this, this.node.id, attempts);
+        if (opts?.destroyOnFail ?? false) {
+            await this.destroy(DestroyReasons.LavalinkNoVoice).catch(() => null);
+        }
+    }
+
     /**
      * Re-route this player to the optimal node for a region that was only learned
      * at connect time (i.e. the voice channel's region is "Automatic", so
@@ -829,14 +958,14 @@ export class Player {
      * on its current node.
      *
      * @param region The region resolved from the VOICE_SERVER_UPDATE endpoint
-     * @returns The node id the player ended up on
+     * @returns The node id the player ended up on, and why it did not move (if it didn't)
      */
-    public async rerouteToRegion(region: string): Promise<string> {
-        if (this.playing || this.queue.current) return this.node.id;
-        if (this.get("internal_nodeChanging") === true) return this.node.id;
+    public async rerouteToRegion(region: string): Promise<{ nodeId: string; moved: boolean; reason?: "already-optimal" | "playing" | "changing" | "failed" }> {
+        if (this.playing || this.queue.current) return { nodeId: this.node.id, moved: false, reason: "playing" };
+        if (this.get("internal_nodeChanging") === true) return { nodeId: this.node.id, moved: false, reason: "changing" };
 
         const optimal = this.LavalinkManager.nodeManager.getOptimalNode(region);
-        if (!optimal || optimal.id === this.node.id) return this.node.id;
+        if (!optimal || optimal.id === this.node.id) return { nodeId: this.node.id, moved: false, reason: "already-optimal" };
 
         if (this.LavalinkManager.options?.advancedOptions?.enableDebugEvents) {
             this.LavalinkManager.emit("debug", DebugEvents.PlayerChangeNode, {
@@ -847,7 +976,7 @@ export class Player {
         }
 
         try {
-            return await this.changeNode(optimal);
+            return { nodeId: await this.changeNode(optimal), moved: true };
         } catch (error) {
             if (this.LavalinkManager.options?.advancedOptions?.enableDebugEvents) {
                 this.LavalinkManager.emit("debug", DebugEvents.PlayerChangeNode, {
@@ -857,7 +986,7 @@ export class Player {
                     functionLayer: "Player > rerouteToRegion()",
                 });
             }
-            return this.node.id;
+            return { nodeId: this.node.id, moved: false, reason: "failed" };
         }
     }
 

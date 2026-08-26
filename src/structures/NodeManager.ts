@@ -198,6 +198,8 @@ export class NodeManager extends EventEmitter {
      *
      * @param vcRegion The voice channel region (e.g. `interaction.member.voice.rtcRegion`)
      * @param sortType How to measure "least used" for load-based ranking & tie-breaks
+     * @param excludeNodeIds Node ids to skip (e.g. ones that already failed to connect).
+     *                       Ignored if excluding them would leave no node at all.
      * @returns The chosen node, or null if no node is connected
      *
      * @example
@@ -205,9 +207,16 @@ export class NodeManager extends EventEmitter {
      * const node = client.lavalink.nodeManager.getOptimalNode(voiceChannel.rtcRegion);
      * ```
      */
-    public getOptimalNode(vcRegion?: string | null, sortType: "memory" | "cpuLavalink" | "cpuSystem" | "calls" | "playingPlayers" | "players" = "players"): LavalinkNode | null {
+    public getOptimalNode(vcRegion?: string | null, sortType: "memory" | "cpuLavalink" | "cpuSystem" | "calls" | "playingPlayers" | "players" = "players", excludeNodeIds?: string[] | Set<string>): LavalinkNode | null {
         // leastUsedNodes is sorted by load ascending, so iterating it gives load-based tie-breaks for free
-        const nodes = this.leastUsedNodes(sortType);
+        let nodes = this.leastUsedNodes(sortType);
+        if (excludeNodeIds) {
+            const exclude = excludeNodeIds instanceof Set ? excludeNodeIds : new Set(excludeNodeIds);
+            // only apply the exclusion if it leaves something to pick - a degraded node
+            // still beats no node at all
+            const filtered = nodes.filter(node => !exclude.has(node.id));
+            if (filtered.length) nodes = filtered;
+        }
         if (!nodes.length) return null;
 
         if (vcRegion) {

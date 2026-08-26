@@ -3039,6 +3039,8 @@ var NodeManager = class extends import_events.EventEmitter {
    *
    * @param vcRegion The voice channel region (e.g. `interaction.member.voice.rtcRegion`)
    * @param sortType How to measure "least used" for load-based ranking & tie-breaks
+   * @param excludeNodeIds Node ids to skip (e.g. ones that already failed to connect).
+   *                       Ignored if excluding them would leave no node at all.
    * @returns The chosen node, or null if no node is connected
    *
    * @example
@@ -3046,8 +3048,13 @@ var NodeManager = class extends import_events.EventEmitter {
    * const node = client.lavalink.nodeManager.getOptimalNode(voiceChannel.rtcRegion);
    * ```
    */
-  getOptimalNode(vcRegion, sortType = "players") {
-    const nodes = this.leastUsedNodes(sortType);
+  getOptimalNode(vcRegion, sortType = "players", excludeNodeIds) {
+    let nodes = this.leastUsedNodes(sortType);
+    if (excludeNodeIds) {
+      const exclude = excludeNodeIds instanceof Set ? excludeNodeIds : new Set(excludeNodeIds);
+      const filtered = nodes.filter((node) => !exclude.has(node.id));
+      if (filtered.length) nodes = filtered;
+    }
     if (!nodes.length) return null;
     if (vcRegion) {
       const region = vcRegion.toLowerCase();
@@ -5190,6 +5197,7 @@ var Player = class {
       }
     });
     this.voiceChannelId = this.options.voiceChannelId;
+    this.armVoiceHandshakeTimeout();
     return this;
   }
   async changeVoiceState(data) {
@@ -5249,6 +5257,7 @@ var Player = class {
       return;
     }
     this.set("internal_destroystatus", true);
+    this.clearVoiceHandshakeTimeout();
     if (disconnect) await this.disconnect(true);
     else this.set("internal_destroywithoutdisconnect", true);
     await this.queue.utils.destroy();
@@ -5306,6 +5315,113 @@ var Player = class {
   unsubscribeLyrics() {
     return this.node.lyrics.unsubscribe(this.guildId);
   }
+  /** Timer that fires if Discord never completes the voice handshake. */
+  voiceHandshakeTimeout;
+  /** Node ids that already failed to complete a voice handshake for this player. */
+  failedVoiceNodes = /* @__PURE__ */ new Set();
+  /**
+   * Incremented on every arm/clear of the voice watchdog. A timeout callback compares the
+   * generation it captured against this; a mismatch means the handshake it was watching is
+   * already resolved or superseded, so the callback is stale and must do nothing.
+   * (Testing `voice.endpoint` instead would break on reconnects, where a stale endpoint from
+   * the previous session is still set.)
+   */
+  voiceHandshakeGeneration = 0;
+  /**
+   * Arm the voice-handshake watchdog.
+   *
+   * `connect()` only fires the gateway op-4 and returns - Discord may never answer
+   * with a VOICE_SERVER_UPDATE (dead edge, gateway hiccup, bad node), leaving the
+   * player silently stuck with no audio and no error. If nothing arrives in time,
+   * {@link onVoiceHandshakeTimeout} moves the player to another node and retries.
+   *
+   * Cleared by {@link clearVoiceHandshakeTimeout} as soon as the handshake lands.
+   */
+  armVoiceHandshakeTimeout() {
+    const opts = this.LavalinkManager.options?.playerOptions?.onVoiceTimeout;
+    const timeoutMs = opts?.timeoutMs ?? 1e4;
+    if (!(timeoutMs > 0)) return;
+    this.clearVoiceHandshakeTimeout();
+    const generation = ++this.voiceHandshakeGeneration;
+    this.voiceHandshakeTimeout = setTimeout(() => {
+      this.voiceHandshakeTimeout = void 0;
+      if (generation !== this.voiceHandshakeGeneration) return;
+      void this.onVoiceHandshakeTimeout(generation);
+    }, timeoutMs);
+    this.voiceHandshakeTimeout.unref?.();
+  }
+  /** Cancel the voice-handshake watchdog (handshake completed, or player is going away). */
+  clearVoiceHandshakeTimeout() {
+    this.voiceHandshakeGeneration++;
+    if (!this.voiceHandshakeTimeout) return;
+    clearTimeout(this.voiceHandshakeTimeout);
+    this.voiceHandshakeTimeout = void 0;
+  }
+  /**
+   * Forget which nodes failed a handshake and how many attempts were spent.
+   * Called on a successful handshake so blame is per-connect-episode, not per player
+   * lifetime - otherwise one transient slow handshake poisons routing forever.
+   */
+  resetVoiceFailureState() {
+    this.failedVoiceNodes.clear();
+    this.set("internal_voiceTimeoutAttempts", void 0);
+  }
+  /**
+   * Handle a voice handshake that never completed: blame the current node, move to
+   * the next best one that hasn't failed yet, and retry. Destroys the player once
+   * every attempt is exhausted (unless `destroyOnFail` is disabled).
+   */
+  async onVoiceHandshakeTimeout(generation) {
+    if (this.get("internal_destroystatus") === true) return;
+    if (!this.voiceChannelId) return;
+    if (this.get("internal_nodeChanging") === true) return;
+    if (generation !== this.voiceHandshakeGeneration) return;
+    const opts = this.LavalinkManager.options?.playerOptions?.onVoiceTimeout;
+    const maxAttempts = opts?.maxAttempts ?? 2;
+    const attempts = (this.get("internal_voiceTimeoutAttempts") ?? 0) + 1;
+    this.set("internal_voiceTimeoutAttempts", attempts);
+    this.failedVoiceNodes.add(this.node.id);
+    if (this.LavalinkManager.options?.advancedOptions?.enableDebugEvents) {
+      this.LavalinkManager.emit("debug", "PlayerChangeNode" /* PlayerChangeNode */, {
+        state: "warn",
+        message: `No VOICE_SERVER_UPDATE within ${opts?.timeoutMs ?? 1e4}ms on node "${this.node.id}" (attempt ${attempts}/${maxAttempts})`,
+        functionLayer: "Player > onVoiceHandshakeTimeout()"
+      });
+    }
+    if (attempts <= maxAttempts && (opts?.switchNode ?? true)) {
+      const next = this.LavalinkManager.nodeManager.getOptimalNode(
+        this.options.vcRegion,
+        "players",
+        this.failedVoiceNodes
+      );
+      if (next && next.id !== this.node.id) {
+        this.set("internal_nodeChanging", true);
+        try {
+          if (this.node.connected) await this.node.destroyPlayer(this.guildId).catch(() => null);
+          if (generation !== this.voiceHandshakeGeneration || this.get("internal_destroystatus") === true) return;
+          this.node = next;
+          this.set("internal_nodeChanging", void 0);
+          await this.connect();
+          return;
+        } catch (error) {
+          if (this.LavalinkManager.options?.advancedOptions?.enableDebugEvents) {
+            this.LavalinkManager.emit("debug", "PlayerChangeNode" /* PlayerChangeNode */, {
+              state: "error",
+              error,
+              message: `Failed to retry voice handshake on node "${next.id}"`,
+              functionLayer: "Player > onVoiceHandshakeTimeout()"
+            });
+          }
+        } finally {
+          this.set("internal_nodeChanging", void 0);
+        }
+      }
+    }
+    this.LavalinkManager.emit("playerVoiceTimeout", this, this.node.id, attempts);
+    if (opts?.destroyOnFail ?? false) {
+      await this.destroy("LavalinkNoVoice" /* LavalinkNoVoice */).catch(() => null);
+    }
+  }
   /**
    * Re-route this player to the optimal node for a region that was only learned
    * at connect time (i.e. the voice channel's region is "Automatic", so
@@ -5317,13 +5433,13 @@ var Player = class {
    * on its current node.
    *
    * @param region The region resolved from the VOICE_SERVER_UPDATE endpoint
-   * @returns The node id the player ended up on
+   * @returns The node id the player ended up on, and why it did not move (if it didn't)
    */
   async rerouteToRegion(region) {
-    if (this.playing || this.queue.current) return this.node.id;
-    if (this.get("internal_nodeChanging") === true) return this.node.id;
+    if (this.playing || this.queue.current) return { nodeId: this.node.id, moved: false, reason: "playing" };
+    if (this.get("internal_nodeChanging") === true) return { nodeId: this.node.id, moved: false, reason: "changing" };
     const optimal = this.LavalinkManager.nodeManager.getOptimalNode(region);
-    if (!optimal || optimal.id === this.node.id) return this.node.id;
+    if (!optimal || optimal.id === this.node.id) return { nodeId: this.node.id, moved: false, reason: "already-optimal" };
     if (this.LavalinkManager.options?.advancedOptions?.enableDebugEvents) {
       this.LavalinkManager.emit("debug", "PlayerChangeNode" /* PlayerChangeNode */, {
         state: "log",
@@ -5332,7 +5448,7 @@ var Player = class {
       });
     }
     try {
-      return await this.changeNode(optimal);
+      return { nodeId: await this.changeNode(optimal), moved: true };
     } catch (error) {
       if (this.LavalinkManager.options?.advancedOptions?.enableDebugEvents) {
         this.LavalinkManager.emit("debug", "PlayerChangeNode" /* PlayerChangeNode */, {
@@ -5342,7 +5458,7 @@ var Player = class {
           functionLayer: "Player > rerouteToRegion()"
         });
       }
-      return this.node.id;
+      return { nodeId: this.node.id, moved: false, reason: "failed" };
     }
   }
   /**
@@ -5589,10 +5705,17 @@ var LavalinkManager = class extends import_events2.EventEmitter {
           autoReconnect: options?.playerOptions?.onDisconnect?.autoReconnect ?? false,
           autoReconnectOnlyWithTracks: options?.playerOptions?.onDisconnect?.autoReconnectOnlyWithTracks ?? false
         },
+        onVoiceTimeout: {
+          timeoutMs: options?.playerOptions?.onVoiceTimeout?.timeoutMs ?? 15e3,
+          switchNode: options?.playerOptions?.onVoiceTimeout?.switchNode ?? true,
+          maxAttempts: options?.playerOptions?.onVoiceTimeout?.maxAttempts ?? 2,
+          destroyOnFail: options?.playerOptions?.onVoiceTimeout?.destroyOnFail ?? false
+        },
         onEmptyQueue: {
           autoPlayFunction: options?.playerOptions?.onEmptyQueue?.autoPlayFunction ?? null,
           destroyAfterMs: options?.playerOptions?.onEmptyQueue?.destroyAfterMs ?? void 0
         },
+        rerouteJitterMs: options?.playerOptions?.rerouteJitterMs ?? 2e3,
         volumeDecrementer: options?.playerOptions?.volumeDecrementer ?? 1,
         requesterTransformer: options?.playerOptions?.requesterTransformer ?? null,
         useUnresolvedData: options?.playerOptions?.useUnresolvedData ?? false,
@@ -5965,17 +6088,39 @@ var LavalinkManager = class extends import_events2.EventEmitter {
           });
           if (this.options?.advancedOptions?.debugOptions?.noAudio === true) console.debug("Lavalink-Client-Debug | NO-AUDIO [::] sendRawData function, Can't send updatePlayer for voice token session - Missing sessionId", { voice: { token: update.token, endpoint: update.endpoint, sessionId: sessionId2Use }, update, playerVoice: player.voice });
         } else {
+          player.clearVoiceHandshakeTimeout();
+          player.resetVoiceFailureState();
           player.voice.token = update.token;
           player.voice.endpoint = update.endpoint;
           player.voice.sessionId = sessionId2Use;
           player.voice.channelId = update.channel_id || player.voice.channelId;
-          const resolvedRegion = getRegionFromVoiceEndpoint(update.endpoint);
+          let regionChange;
+          const { region: resolvedRegion, iata } = classifyVoiceEndpoint(update.endpoint);
           if (resolvedRegion && resolvedRegion !== player.options.vcRegion) {
-            const hadRegion = !!player.options.vcRegion;
+            const oldRegion = player.options.vcRegion ?? null;
+            const oldNodeId = player.node.id;
             player.options.vcRegion = resolvedRegion;
-            if (!hadRegion || player.get("internal_regionAutoResolved") === true) {
+            const base = {
+              oldRegion,
+              newRegion: resolvedRegion,
+              iata,
+              endpoint: update.endpoint,
+              firstResolution: oldRegion === null,
+              oldNodeId
+            };
+            if (!oldRegion || player.get("internal_regionAutoResolved") === true) {
               player.set("internal_regionAutoResolved", true);
-              await player.rerouteToRegion(resolvedRegion);
+              const jitterMs = Math.floor(Math.random() * (this.options?.playerOptions?.rerouteJitterMs ?? 2e3));
+              setTimeout(() => {
+                void player.rerouteToRegion(resolvedRegion).then((result) => this.emit("playerRegionChange", player, {
+                  ...base,
+                  movedNode: result.moved,
+                  newNodeId: result.nodeId,
+                  ...result.moved ? {} : { reason: result.reason }
+                })).catch(() => null);
+              }, jitterMs).unref?.();
+            } else {
+              regionChange = { ...base, movedNode: false, newNodeId: player.node.id, reason: "explicit-region" };
             }
           }
           await player.node.updatePlayer({
@@ -5997,6 +6142,7 @@ var LavalinkManager = class extends import_events2.EventEmitter {
             });
           }
           if (this.options?.advancedOptions?.debugOptions?.noAudio === true) console.debug("Lavalink-Client-Debug | NO-AUDIO [::] sendRawData function, Sent updatePlayer for voice token session", { voice: { token: update.token, endpoint: update.endpoint, sessionId: sessionId2Use }, playerVoice: player.voice, update });
+          if (regionChange) this.emit("playerRegionChange", player, regionChange);
         }
         return;
       }
