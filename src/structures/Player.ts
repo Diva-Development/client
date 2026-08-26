@@ -658,7 +658,7 @@ export class Player {
      * Connects the Player to the Voice Channel
      * @returns
      */
-    public async connect() {
+    public async connect(skipVoiceHandshakeWatchdog = false) {
         if (!this.options.voiceChannelId) throw new RangeError("No Voice Channel id has been set. (player.options.voiceChannelId)");
 
         await this.LavalinkManager.options.sendToShard(this.guildId, {
@@ -673,8 +673,11 @@ export class Player {
 
         this.voiceChannelId = this.options.voiceChannelId;
 
-        // Discord may never answer the op-4; watch for that instead of hanging silently
-        this.armVoiceHandshakeTimeout();
+        // Discord may never answer the op-4; watch for that instead of hanging silently.
+        // Skipped when moving nodes: re-connecting to a channel we are already in produces no
+        // fresh VOICE_SERVER_UPDATE, so an armed watchdog would always fire and tear down a
+        // player whose audio is working fine.
+        if (!skipVoiceHandshakeWatchdog) this.armVoiceHandshakeTimeout();
 
         return this;
     }
@@ -1050,7 +1053,8 @@ export class Player {
         this.node = updateNode;
         const now = performance.now();
         try {
-            await this.connect();
+            // node move, not a fresh handshake - see connect()
+            await this.connect(true);
             const hasSponsorBlock = this.node.info?.plugins?.find(v => v.name === "sponsorblock-plugin");
                 if (hasSponsorBlock) {
                     const sponsorBlockCategories = this.get("internal_sponsorBlockCategories");

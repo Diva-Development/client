@@ -5114,7 +5114,7 @@ var Player = class {
    * Connects the Player to the Voice Channel
    * @returns
    */
-  async connect() {
+  async connect(skipVoiceHandshakeWatchdog = false) {
     if (!this.options.voiceChannelId) throw new RangeError("No Voice Channel id has been set. (player.options.voiceChannelId)");
     await this.LavalinkManager.options.sendToShard(this.guildId, {
       op: 4,
@@ -5126,7 +5126,7 @@ var Player = class {
       }
     });
     this.voiceChannelId = this.options.voiceChannelId;
-    this.armVoiceHandshakeTimeout();
+    if (!skipVoiceHandshakeWatchdog) this.armVoiceHandshakeTimeout();
     return this;
   }
   async changeVoiceState(data) {
@@ -5444,7 +5444,7 @@ var Player = class {
     this.node = updateNode;
     const now = performance.now();
     try {
-      await this.connect();
+      await this.connect(true);
       const hasSponsorBlock = this.node.info?.plugins?.find((v) => v.name === "sponsorblock-plugin");
       if (hasSponsorBlock) {
         const sponsorBlockCategories = this.get("internal_sponsorBlockCategories");

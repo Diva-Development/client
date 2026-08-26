@@ -1127,7 +1127,7 @@ declare class Player {
      * Connects the Player to the Voice Channel
      * @returns
      */
-    connect(): Promise<this>;
+    connect(skipVoiceHandshakeWatchdog?: boolean): Promise<this>;
     changeVoiceState(data: {
         voiceChannelId?: string;
         selfDeaf?: boolean;
