@@ -1030,7 +1030,7 @@ export class LavalinkNode {
         }
 
         // just for res
-        if (res?.guildId === "string" && typeof res?.voice !== "undefined") {
+        if (typeof res?.guildId === "string" && typeof res?.voice !== "undefined") {
             const player = this.NodeManager.LavalinkManager.getPlayer(data.guildId);
             if (!player) return;
 

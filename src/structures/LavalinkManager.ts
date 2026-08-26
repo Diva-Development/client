@@ -102,8 +102,8 @@ export class LavalinkManager<CustomPlayerT extends Player = Player> extends Even
                     autoReconnectOnlyWithTracks: options?.playerOptions?.onDisconnect?.autoReconnectOnlyWithTracks ?? false,
                 },
                 onVoiceTimeout: {
-                    timeoutMs: options?.playerOptions?.onVoiceTimeout?.timeoutMs ?? 15_000,
-                    switchNode: options?.playerOptions?.onVoiceTimeout?.switchNode ?? true,
+                    timeoutMs: options?.playerOptions?.onVoiceTimeout?.timeoutMs ?? 30_000,
+                    switchNode: options?.playerOptions?.onVoiceTimeout?.switchNode ?? false,
                     maxAttempts: options?.playerOptions?.onVoiceTimeout?.maxAttempts ?? 2,
                     destroyOnFail: options?.playerOptions?.onVoiceTimeout?.destroyOnFail ?? false,
                 },
@@ -111,6 +111,7 @@ export class LavalinkManager<CustomPlayerT extends Player = Player> extends Even
                     autoPlayFunction: options?.playerOptions?.onEmptyQueue?.autoPlayFunction ?? null,
                     destroyAfterMs: options?.playerOptions?.onEmptyQueue?.destroyAfterMs ?? undefined
                 },
+                maxVoiceCredentialAgeMs: options?.playerOptions?.maxVoiceCredentialAgeMs ?? 60_000,
                 rerouteWhilePlaying: options?.playerOptions?.rerouteWhilePlaying ?? true,
                 rerouteJitterMs: options?.playerOptions?.rerouteJitterMs ?? 2_000,
                 volumeDecrementer: options?.playerOptions?.volumeDecrementer ?? 1,
@@ -534,6 +535,7 @@ export class LavalinkManager<CustomPlayerT extends Player = Player> extends Even
                     // handshake completed - stand the watchdog down and forget past failures,
                     // so blame is per-connect-episode rather than per player lifetime
                     player.clearVoiceHandshakeTimeout();
+                    player.markVoiceHandshakeComplete();
                     player.resetVoiceFailureState();
 
                     // persist the voice data so changeNode() (and re-routing below) has what it needs
@@ -541,6 +543,9 @@ export class LavalinkManager<CustomPlayerT extends Player = Player> extends Even
                     player.voice.endpoint = update.endpoint;
                     player.voice.sessionId = sessionId2Use;
                     player.voice.channelId = update.channel_id || player.voice.channelId;
+                    // stamp freshness: changeNode must know whether these credentials are still
+                    // usable or whether it has to force a real re-handshake
+                    player.set("internal_voiceUpdatedAt", Date.now());
 
                     // The channel's region may be "Automatic" (rtcRegion === null), in which case the
                     // player was created without region info and routed purely by load. Discord only
@@ -728,7 +733,10 @@ export class LavalinkManager<CustomPlayerT extends Player = Player> extends Even
 
                         // connect if there are tracks & autoReconnectOnlyWithTracks = true or autoReconnectOnlyWithTracks is false
                         if (!autoReconnectOnlyWithTracks || (autoReconnectOnlyWithTracks && (player.queue.current || (await player.queue.getTrackCount())))) {
-                            await player.connect();
+                            // no watchdog: this op-4 targets a channel Discord may still consider us
+                            // in, which produces no fresh VOICE_SERVER_UPDATE, so an armed timer
+                            // could never be cleared and would always fire
+                            await player.connect(true);
                         }
                         // replay the current playing stream
                         if (player.queue.current) {

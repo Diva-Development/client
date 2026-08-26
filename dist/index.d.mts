@@ -1213,6 +1213,12 @@ declare class Player {
      * Called on a successful handshake so blame is per-connect-episode, not per player
      * lifetime - otherwise one transient slow handshake poisons routing forever.
      */
+    /**
+     * Marks the handshake for the current connect episode as completed. Recorded as the
+     * generation value so a later episode (reconnect) is distinguishable from this one -
+     * testing `voice.endpoint` alone cannot do that, because it persists across reconnects.
+     */
+    markVoiceHandshakeComplete(): void;
     resetVoiceFailureState(): void;
     /**
      * Handle a voice handshake that never completed: blame the current node, move to
@@ -3397,6 +3403,15 @@ interface ManagerPlayerOptions<CustomPlayerT extends Player = Player> {
      */
     rerouteWhilePlaying?: boolean;
     /**
+     * How long cached Discord voice credentials stay usable for a node move.
+     *
+     * Voice tokens are per-session and are invalidated by the voice-server events that usually
+     * trigger a move. Beyond this age, changeNode() forces a real re-handshake instead of
+     * replaying dead credentials onto the new node (which yields a player Lavalink accepts but
+     * that never produces audio). @default 60000
+     */
+    maxVoiceCredentialAgeMs?: number;
+    /**
      * Max random delay before re-routing a player after its voice region resolves.
      * Discord migrates a whole edge at once, so without jitter thousands of players
      * would fire changeNode() REST calls in the same second. @default 2000
@@ -3410,9 +3425,16 @@ interface ManagerPlayerOptions<CustomPlayerT extends Player = Player> {
      * detects that and moves the player to another node before giving up.
      */
     onVoiceTimeout?: {
-        /** How long to wait for VOICE_SERVER_UPDATE before acting. <= 0 disables. @default 15000 */
+        /** How long to wait for VOICE_SERVER_UPDATE before acting. <= 0 disables. @default 30000 */
         timeoutMs?: number;
-        /** Move the player to a different node and retry the handshake. @default true */
+        /**
+         * Move the player to a different node and retry the handshake.
+         *
+         * Off by default: a late VOICE_SERVER_UPDATE is far more common than an absent one, and a
+         * node swap tears down a connection that was about to succeed. Leave this false to get
+         * `playerVoiceTimeout` purely as a diagnostic signal, and enable it only if telemetry
+         * shows handshakes that truly never complete. @default false
+         */
         switchNode?: boolean;
         /** How many nodes to try before giving up. @default 2 */
         maxAttempts?: number;

@@ -849,7 +849,7 @@ export class Player {
      */
     public armVoiceHandshakeTimeout(): void {
         const opts = this.LavalinkManager.options?.playerOptions?.onVoiceTimeout;
-        const timeoutMs = opts?.timeoutMs ?? 10_000;
+        const timeoutMs = opts?.timeoutMs ?? 15_000;
         if (!(timeoutMs > 0)) return;
 
         this.clearVoiceHandshakeTimeout();
@@ -878,6 +878,15 @@ export class Player {
      * Called on a successful handshake so blame is per-connect-episode, not per player
      * lifetime - otherwise one transient slow handshake poisons routing forever.
      */
+    /**
+     * Marks the handshake for the current connect episode as completed. Recorded as the
+     * generation value so a later episode (reconnect) is distinguishable from this one -
+     * testing `voice.endpoint` alone cannot do that, because it persists across reconnects.
+     */
+    public markVoiceHandshakeComplete(): void {
+        this.set("internal_voiceHandshakeDoneGen", this.voiceHandshakeGeneration);
+    }
+
     public resetVoiceFailureState(): void {
         this.failedVoiceNodes.clear();
         this.set("internal_voiceTimeoutAttempts", undefined);
@@ -902,6 +911,16 @@ export class Player {
         // path except a brand-new player's first connect. The generation check above already
         // invalidates a watchdog whose handshake landed.
         if (this.playing || this.connected) return;
+        // The decisive check: did the handshake for THIS connect episode already land? A slow
+        // VOICE_SERVER_UPDATE (busy gateway, large guild) still arrives - it is just late - and a
+        // player mid-connect legitimately has playing=false and connected=false, because
+        // `connected` only becomes true once Lavalink pushes a playerUpdate, which cannot happen
+        // before the handshake. Without this, the watchdog tears down healthy connecting players.
+        if (this.get("internal_voiceHandshakeDoneGen") === this.voiceHandshakeGeneration) return;
+        // Voice data present with no newer arm means the handshake completed and nothing has
+        // re-connected since - also healthy.
+        if (this.voice.endpoint && this.voice.token && this.voice.sessionId
+            && (this.get("internal_voiceHandshakeDoneGen") as number ?? -1) >= 0) return;
 
         const opts = this.LavalinkManager.options?.playerOptions?.onVoiceTimeout;
         const maxAttempts = opts?.maxAttempts ?? 2;
@@ -913,7 +932,7 @@ export class Player {
         if (this.LavalinkManager.options?.advancedOptions?.enableDebugEvents) {
             this.LavalinkManager.emit("debug", DebugEvents.PlayerChangeNode, {
                 state: "warn",
-                message: `No VOICE_SERVER_UPDATE within ${opts?.timeoutMs ?? 10_000}ms on node "${this.node.id}" (attempt ${attempts}/${maxAttempts})`,
+                message: `No VOICE_SERVER_UPDATE within ${opts?.timeoutMs ?? 15_000}ms on node "${this.node.id}" (attempt ${attempts}/${maxAttempts})`,
                 functionLayer: "Player > onVoiceHandshakeTimeout()",
             });
         }
@@ -1066,6 +1085,13 @@ export class Player {
             !this.voice.sessionId ||
             !this.voice.token)
             throw new Error("Voice Data is missing, can't change the node");
+        // Discord voice credentials are per-session and are invalidated by the very voice-server
+        // event that usually triggers a move. Replaying stale ones produces a player Lavalink
+        // accepts (updatePlayer is an upsert) but that never produces audio - a silent stall that
+        // only destroy+recreate fixes. Force a real handshake instead of trusting the cache.
+        const voiceAgeMs = Date.now() - ((this.get("internal_voiceUpdatedAt") as number) ?? 0);
+        const staleVoice = voiceAgeMs > (this.LavalinkManager.options?.playerOptions?.maxVoiceCredentialAgeMs ?? 60_000);
+
         const oldNode = this.node;
         this.set("internal_nodeChanging", true); // This will stop execution of trackEnd or queueEnd event while changing the node
         const now = performance.now();
@@ -1108,6 +1134,15 @@ export class Player {
                         });
                     }
                 }
+            if (staleVoice) {
+                // re-handshake: leave and rejoin so Discord issues fresh credentials, rather than
+                // PATCHing a dead session onto the new node
+                await this.LavalinkManager.options.sendToShard(this.guildId, {
+                    op: 4,
+                    d: { guild_id: this.guildId, channel_id: null, self_mute: false, self_deaf: false },
+                });
+                await this.connect(true);
+            }
             await this.node.updatePlayer({
                 guildId: this.guildId,
                 noReplace: false,

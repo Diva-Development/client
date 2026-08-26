@@ -2161,7 +2161,7 @@ var LavalinkNode = class {
         player.filterManager.checkFiltersState(oldFilterTimescale);
       }
     }
-    if (res?.guildId === "string" && typeof res?.voice !== "undefined") {
+    if (typeof res?.guildId === "string" && typeof res?.voice !== "undefined") {
       const player = this.NodeManager.LavalinkManager.getPlayer(data.guildId);
       if (!player) return;
       if (typeof res?.voice?.connected === "boolean" && res.voice.connected === false) {
@@ -5339,7 +5339,7 @@ var Player = class {
    */
   armVoiceHandshakeTimeout() {
     const opts = this.LavalinkManager.options?.playerOptions?.onVoiceTimeout;
-    const timeoutMs = opts?.timeoutMs ?? 1e4;
+    const timeoutMs = opts?.timeoutMs ?? 15e3;
     if (!(timeoutMs > 0)) return;
     this.clearVoiceHandshakeTimeout();
     const generation = ++this.voiceHandshakeGeneration;
@@ -5362,6 +5362,14 @@ var Player = class {
    * Called on a successful handshake so blame is per-connect-episode, not per player
    * lifetime - otherwise one transient slow handshake poisons routing forever.
    */
+  /**
+   * Marks the handshake for the current connect episode as completed. Recorded as the
+   * generation value so a later episode (reconnect) is distinguishable from this one -
+   * testing `voice.endpoint` alone cannot do that, because it persists across reconnects.
+   */
+  markVoiceHandshakeComplete() {
+    this.set("internal_voiceHandshakeDoneGen", this.voiceHandshakeGeneration);
+  }
   resetVoiceFailureState() {
     this.failedVoiceNodes.clear();
     this.set("internal_voiceTimeoutAttempts", void 0);
@@ -5377,6 +5385,8 @@ var Player = class {
     if (this.get("internal_nodeChanging") === true) return;
     if (generation !== this.voiceHandshakeGeneration) return;
     if (this.playing || this.connected) return;
+    if (this.get("internal_voiceHandshakeDoneGen") === this.voiceHandshakeGeneration) return;
+    if (this.voice.endpoint && this.voice.token && this.voice.sessionId && (this.get("internal_voiceHandshakeDoneGen") ?? -1) >= 0) return;
     const opts = this.LavalinkManager.options?.playerOptions?.onVoiceTimeout;
     const maxAttempts = opts?.maxAttempts ?? 2;
     const attempts = (this.get("internal_voiceTimeoutAttempts") ?? 0) + 1;
@@ -5385,7 +5395,7 @@ var Player = class {
     if (this.LavalinkManager.options?.advancedOptions?.enableDebugEvents) {
       this.LavalinkManager.emit("debug", "PlayerChangeNode" /* PlayerChangeNode */, {
         state: "warn",
-        message: `No VOICE_SERVER_UPDATE within ${opts?.timeoutMs ?? 1e4}ms on node "${this.node.id}" (attempt ${attempts}/${maxAttempts})`,
+        message: `No VOICE_SERVER_UPDATE within ${opts?.timeoutMs ?? 15e3}ms on node "${this.node.id}" (attempt ${attempts}/${maxAttempts})`,
         functionLayer: "Player > onVoiceHandshakeTimeout()"
       });
     }
@@ -5515,6 +5525,8 @@ var Player = class {
     const currentTrack = this.queue.current;
     if (!this.voice.endpoint || !this.voice.sessionId || !this.voice.token)
       throw new Error("Voice Data is missing, can't change the node");
+    const voiceAgeMs = Date.now() - (this.get("internal_voiceUpdatedAt") ?? 0);
+    const staleVoice = voiceAgeMs > (this.LavalinkManager.options?.playerOptions?.maxVoiceCredentialAgeMs ?? 6e4);
     const oldNode = this.node;
     this.set("internal_nodeChanging", true);
     const now = performance.now();
@@ -5547,6 +5559,13 @@ var Player = class {
             }
           });
         }
+      }
+      if (staleVoice) {
+        await this.LavalinkManager.options.sendToShard(this.guildId, {
+          op: 4,
+          d: { guild_id: this.guildId, channel_id: null, self_mute: false, self_deaf: false }
+        });
+        await this.connect(true);
       }
       await this.node.updatePlayer({
         guildId: this.guildId,
@@ -5717,8 +5736,8 @@ var LavalinkManager = class extends import_events2.EventEmitter {
           autoReconnectOnlyWithTracks: options?.playerOptions?.onDisconnect?.autoReconnectOnlyWithTracks ?? false
         },
         onVoiceTimeout: {
-          timeoutMs: options?.playerOptions?.onVoiceTimeout?.timeoutMs ?? 15e3,
-          switchNode: options?.playerOptions?.onVoiceTimeout?.switchNode ?? true,
+          timeoutMs: options?.playerOptions?.onVoiceTimeout?.timeoutMs ?? 3e4,
+          switchNode: options?.playerOptions?.onVoiceTimeout?.switchNode ?? false,
           maxAttempts: options?.playerOptions?.onVoiceTimeout?.maxAttempts ?? 2,
           destroyOnFail: options?.playerOptions?.onVoiceTimeout?.destroyOnFail ?? false
         },
@@ -5726,6 +5745,7 @@ var LavalinkManager = class extends import_events2.EventEmitter {
           autoPlayFunction: options?.playerOptions?.onEmptyQueue?.autoPlayFunction ?? null,
           destroyAfterMs: options?.playerOptions?.onEmptyQueue?.destroyAfterMs ?? void 0
         },
+        maxVoiceCredentialAgeMs: options?.playerOptions?.maxVoiceCredentialAgeMs ?? 6e4,
         rerouteWhilePlaying: options?.playerOptions?.rerouteWhilePlaying ?? true,
         rerouteJitterMs: options?.playerOptions?.rerouteJitterMs ?? 2e3,
         volumeDecrementer: options?.playerOptions?.volumeDecrementer ?? 1,
@@ -6101,11 +6121,13 @@ var LavalinkManager = class extends import_events2.EventEmitter {
           if (this.options?.advancedOptions?.debugOptions?.noAudio === true) console.debug("Lavalink-Client-Debug | NO-AUDIO [::] sendRawData function, Can't send updatePlayer for voice token session - Missing sessionId", { voice: { token: update.token, endpoint: update.endpoint, sessionId: sessionId2Use }, update, playerVoice: player.voice });
         } else {
           player.clearVoiceHandshakeTimeout();
+          player.markVoiceHandshakeComplete();
           player.resetVoiceFailureState();
           player.voice.token = update.token;
           player.voice.endpoint = update.endpoint;
           player.voice.sessionId = sessionId2Use;
           player.voice.channelId = update.channel_id || player.voice.channelId;
+          player.set("internal_voiceUpdatedAt", Date.now());
           let regionChange;
           let scheduleReroute;
           const { region: resolvedRegion, iata } = classifyVoiceEndpoint(update.endpoint);
@@ -6241,7 +6263,7 @@ var LavalinkManager = class extends import_events2.EventEmitter {
               });
             }
             if (!autoReconnectOnlyWithTracks || autoReconnectOnlyWithTracks && (player.queue.current || await player.queue.getTrackCount())) {
-              await player.connect();
+              await player.connect(true);
             }
             if (player.queue.current) {
               return void await player.play({ position: previousPosition, paused: previousPaused, clientTrack: player.queue.current });
