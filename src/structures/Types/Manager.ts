@@ -275,6 +275,14 @@ export interface ManagerPlayerOptions<CustomPlayerT extends Player = Player> {
     /** Transforms the saved data of a requested user */
     requesterTransformer?: (requester: unknown) => unknown;
     /**
+     * Move a player to a better node even while it is playing.
+     *
+     * A region change has already interrupted the voice connection, so switching nodes at that
+     * moment usually adds no downtime the listener didn't already experience. Set to `false` to
+     * keep the player on its current node until the track ends. @default true
+     */
+    rerouteWhilePlaying?: boolean;
+    /**
      * Max random delay before re-routing a player after its voice region resolves.
      * Discord migrates a whole edge at once, so without jitter thousands of players
      * would fire changeNode() REST calls in the same second. @default 2000

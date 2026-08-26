@@ -5436,10 +5436,12 @@ var Player = class {
    * @returns The node id the player ended up on, and why it did not move (if it didn't)
    */
   async rerouteToRegion(region) {
-    if (this.playing || this.queue.current) return { nodeId: this.node.id, moved: false, reason: "playing" };
     if (this.get("internal_nodeChanging") === true) return { nodeId: this.node.id, moved: false, reason: "changing" };
     const optimal = this.LavalinkManager.nodeManager.getOptimalNode(region);
     if (!optimal || optimal.id === this.node.id) return { nodeId: this.node.id, moved: false, reason: "already-optimal" };
+    if ((this.playing || this.queue.current) && this.LavalinkManager.options?.playerOptions?.rerouteWhilePlaying === false) {
+      return { nodeId: this.node.id, moved: false, reason: "playing" };
+    }
     if (this.LavalinkManager.options?.advancedOptions?.enableDebugEvents) {
       this.LavalinkManager.emit("debug", "PlayerChangeNode" /* PlayerChangeNode */, {
         state: "log",
@@ -5715,6 +5717,7 @@ var LavalinkManager = class extends import_events2.EventEmitter {
           autoPlayFunction: options?.playerOptions?.onEmptyQueue?.autoPlayFunction ?? null,
           destroyAfterMs: options?.playerOptions?.onEmptyQueue?.destroyAfterMs ?? void 0
         },
+        rerouteWhilePlaying: options?.playerOptions?.rerouteWhilePlaying ?? true,
         rerouteJitterMs: options?.playerOptions?.rerouteJitterMs ?? 2e3,
         volumeDecrementer: options?.playerOptions?.volumeDecrementer ?? 1,
         requesterTransformer: options?.playerOptions?.requesterTransformer ?? null,

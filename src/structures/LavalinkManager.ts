@@ -111,6 +111,7 @@ export class LavalinkManager<CustomPlayerT extends Player = Player> extends Even
                     autoPlayFunction: options?.playerOptions?.onEmptyQueue?.autoPlayFunction ?? null,
                     destroyAfterMs: options?.playerOptions?.onEmptyQueue?.destroyAfterMs ?? undefined
                 },
+                rerouteWhilePlaying: options?.playerOptions?.rerouteWhilePlaying ?? true,
                 rerouteJitterMs: options?.playerOptions?.rerouteJitterMs ?? 2_000,
                 volumeDecrementer: options?.playerOptions?.volumeDecrementer ?? 1,
                 requesterTransformer: options?.playerOptions?.requesterTransformer ?? null,

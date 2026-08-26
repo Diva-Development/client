@@ -961,11 +961,18 @@ export class Player {
      * @returns The node id the player ended up on, and why it did not move (if it didn't)
      */
     public async rerouteToRegion(region: string): Promise<{ nodeId: string; moved: boolean; reason?: "already-optimal" | "playing" | "changing" | "failed" }> {
-        if (this.playing || this.queue.current) return { nodeId: this.node.id, moved: false, reason: "playing" };
         if (this.get("internal_nodeChanging") === true) return { nodeId: this.node.id, moved: false, reason: "changing" };
 
+        // Resolve the target node BEFORE the playing check: when the node is already optimal
+        // there is nothing to move, and reporting "playing" there would be misleading.
         const optimal = this.LavalinkManager.nodeManager.getOptimalNode(region);
         if (!optimal || optimal.id === this.node.id) return { nodeId: this.node.id, moved: false, reason: "already-optimal" };
+
+        // A move mid-track costs a short audio gap. But a region change has already interrupted
+        // voice, so moving then is usually free - hence rerouteWhilePlaying defaults to true.
+        if ((this.playing || this.queue.current) && this.LavalinkManager.options?.playerOptions?.rerouteWhilePlaying === false) {
+            return { nodeId: this.node.id, moved: false, reason: "playing" };
+        }
 
         if (this.LavalinkManager.options?.advancedOptions?.enableDebugEvents) {
             this.LavalinkManager.emit("debug", DebugEvents.PlayerChangeNode, {
