@@ -894,6 +894,11 @@ export class Player {
         if (!this.voiceChannelId) return;
         if (this.get("internal_nodeChanging") === true) return;
         if (generation !== this.voiceHandshakeGeneration) return;
+        // Never touch a player that is demonstrably fine. This watchdog exists for a handshake
+        // that never happened - if voice data is present or audio is flowing, the connection
+        // works and tearing it down would CAUSE the outage it is meant to detect.
+        if (this.voice.endpoint && this.voice.token && this.voice.sessionId) return;
+        if (this.playing || this.connected) return;
 
         const opts = this.LavalinkManager.options?.playerOptions?.onVoiceTimeout;
         const maxAttempts = opts?.maxAttempts ?? 2;
@@ -919,8 +924,12 @@ export class Player {
                 // take the same mutex changeNode() uses, so the two can't both write this.node
                 this.set("internal_nodeChanging", true);
                 try {
-                    // no voice data yet, so changeNode() would throw - swap directly
-                    if (this.node.connected) await this.node.destroyPlayer(this.guildId).catch(() => null);
+                    // no voice data yet, so changeNode() would throw - swap directly.
+                    // Only tear down the old side when this player never established audio;
+                    // guarded above, but re-checked here because of the awaits in between.
+                    if (this.node.connected && !this.playing && !this.connected) {
+                        await this.node.destroyPlayer(this.guildId).catch(() => null);
+                    }
                     // re-check across the await: the handshake may have landed, or the player gone
                     if (generation !== this.voiceHandshakeGeneration || this.get("internal_destroystatus") === true) return;
                     this.node = next;

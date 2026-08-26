@@ -5376,6 +5376,8 @@ var Player = class {
     if (!this.voiceChannelId) return;
     if (this.get("internal_nodeChanging") === true) return;
     if (generation !== this.voiceHandshakeGeneration) return;
+    if (this.voice.endpoint && this.voice.token && this.voice.sessionId) return;
+    if (this.playing || this.connected) return;
     const opts = this.LavalinkManager.options?.playerOptions?.onVoiceTimeout;
     const maxAttempts = opts?.maxAttempts ?? 2;
     const attempts = (this.get("internal_voiceTimeoutAttempts") ?? 0) + 1;
@@ -5397,7 +5399,9 @@ var Player = class {
       if (next && next.id !== this.node.id) {
         this.set("internal_nodeChanging", true);
         try {
-          if (this.node.connected) await this.node.destroyPlayer(this.guildId).catch(() => null);
+          if (this.node.connected && !this.playing && !this.connected) {
+            await this.node.destroyPlayer(this.guildId).catch(() => null);
+          }
           if (generation !== this.voiceHandshakeGeneration || this.get("internal_destroystatus") === true) return;
           this.node = next;
           this.set("internal_nodeChanging", void 0);
