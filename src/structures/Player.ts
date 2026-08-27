@@ -1081,6 +1081,8 @@ export class Player {
 
         const data = await this.toJSON();
         const currentTrack = this.queue.current;
+        // captured before the old node is paused below - that pause syncs back onto this.paused
+        const wasPaused = this.paused;
         if (!this.voice.endpoint ||
             !this.voice.sessionId ||
             !this.voice.token)
@@ -1131,11 +1133,16 @@ export class Player {
             // voice connection for the duration of the move (audible as the old track continuing
             // over the new one). Pausing is safe: the player still exists on the old node, so a
             // failed move can still be rolled back to it.
+            // NOTE: updatePlayer({paused}) writes back to player.paused/playing via
+            // Node.syncPlayerData(), regardless of which node it was sent to - so the caller's
+            // real paused state is captured beforehand and restored for the new node.
             if (oldNode.connected && oldNode.id !== updateNode.id && currentTrack) {
                 await oldNode.updatePlayer({
                     guildId: this.guildId,
                     playerOptions: { paused: true },
                 }).catch(() => null);
+                this.paused = wasPaused;
+                this.playing = !wasPaused;
             }
 
             await this.node.updatePlayer({
@@ -1146,7 +1153,7 @@ export class Player {
                         track: currentTrack,
                         position: data.lastPosition || 0,
                         volume: this.lavalinkVolume,
-                        paused: this.paused,
+                        paused: wasPaused,
                     }),
                     voice: {
                         token: this.voice.token,

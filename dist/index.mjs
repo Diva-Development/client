@@ -5456,6 +5456,7 @@ var Player = class {
     }
     const data = await this.toJSON();
     const currentTrack = this.queue.current;
+    const wasPaused = this.paused;
     if (!this.voice.endpoint || !this.voice.sessionId || !this.voice.token)
       throw new Error("Voice Data is missing, can't change the node");
     const oldNode = this.node;
@@ -5496,6 +5497,8 @@ var Player = class {
           guildId: this.guildId,
           playerOptions: { paused: true }
         }).catch(() => null);
+        this.paused = wasPaused;
+        this.playing = !wasPaused;
       }
       await this.node.updatePlayer({
         guildId: this.guildId,
@@ -5505,7 +5508,7 @@ var Player = class {
             track: currentTrack,
             position: data.lastPosition || 0,
             volume: this.lavalinkVolume,
-            paused: this.paused
+            paused: wasPaused
           },
           voice: {
             token: this.voice.token,
