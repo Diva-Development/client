@@ -2501,6 +2501,7 @@ var LavalinkNode = class {
   /** @private util function for handling trackEnd event */
   async trackEnd(player, track, payload) {
     if (player.get("internal_nodeChanging") === true) return;
+    if (player.node?.id !== this.options.id) return;
     const trackToUse = track || this.getTrackOfPayload(payload);
     this.NodeManager.LavalinkManager.emit("deleteMessage", player, player.get("message") || null);
     if (payload.reason === "replaced") {
@@ -2540,6 +2541,7 @@ var LavalinkNode = class {
   }
   /** @private util function for handling trackStuck event */
   async trackStuck(player, track, payload) {
+    if (player.node?.id !== this.options.id) return;
     if (this.NodeManager.LavalinkManager.options.playerOptions.maxErrorsPerTime?.threshold > 0 && this.NodeManager.LavalinkManager.options.playerOptions.maxErrorsPerTime?.maxAmount >= 0) {
       const oldTimestamps = (player.get("internal_erroredTracksTimestamps") || []).filter((v) => Date.now() - v < this.NodeManager.LavalinkManager.options.playerOptions.maxErrorsPerTime?.threshold);
       player.set("internal_erroredTracksTimestamps", [...oldTimestamps, Date.now()]);
@@ -2575,6 +2577,7 @@ var LavalinkNode = class {
   }
   /** @private util function for handling trackError event */
   async trackError(player, track, payload) {
+    if (player.node?.id !== this.options.id) return;
     if (this.NodeManager.LavalinkManager.options.playerOptions.maxErrorsPerTime?.threshold > 0 && this.NodeManager.LavalinkManager.options.playerOptions.maxErrorsPerTime?.maxAmount >= 0) {
       const oldTimestamps = (player.get("internal_erroredTracksTimestamps") || []).filter((v) => Date.now() - v < this.NodeManager.LavalinkManager.options.playerOptions.maxErrorsPerTime?.threshold);
       player.set("internal_erroredTracksTimestamps", [...oldTimestamps, Date.now()]);
@@ -2692,6 +2695,7 @@ var LavalinkNode = class {
   /** private util function for handling the queue end event */
   async queueEnd(player, track, payload) {
     if (player.get("internal_nodeChanging") === true) return;
+    if (player.node?.id !== this.options.id) return;
     this.NodeManager.LavalinkManager.emit("deleteMessage", player, player.get("message") || null);
     player.queue.current = null;
     player.playing = false;
@@ -5559,6 +5563,12 @@ var Player = class {
             }
           });
         }
+      }
+      if (oldNode.connected && oldNode.id !== updateNode.id && currentTrack) {
+        await oldNode.updatePlayer({
+          guildId: this.guildId,
+          playerOptions: { paused: true }
+        }).catch(() => null);
       }
       if (staleVoice) {
         await this.LavalinkManager.options.sendToShard(this.guildId, {

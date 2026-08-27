@@ -1134,6 +1134,17 @@ export class Player {
                         });
                     }
                 }
+            // Stop the old node streaming BEFORE the new one starts, or both play into the same
+            // voice connection for the duration of the move (audible as the old track continuing
+            // over the new one). Pausing is safe: the player still exists on the old node, so a
+            // failed move can still be rolled back to it.
+            if (oldNode.connected && oldNode.id !== updateNode.id && currentTrack) {
+                await oldNode.updatePlayer({
+                    guildId: this.guildId,
+                    playerOptions: { paused: true },
+                }).catch(() => null);
+            }
+
             if (staleVoice) {
                 // re-handshake: leave and rejoin so Discord issues fresh credentials, rather than
                 // PATCHing a dead session onto the new node

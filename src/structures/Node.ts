@@ -1410,6 +1410,10 @@ export class LavalinkNode {
     /** @private util function for handling trackEnd event */
     private async trackEnd(player: Player, track: Track, payload: TrackEndEvent): Promise<void> {
         if (player.get('internal_nodeChanging') === true) return; // Check if nodeChange is in Progress than stop the trackEnd Event from being triggered.
+        // A node the player has already left still emits a TrackEndEvent when its side is torn
+        // down. That arrives asynchronously - after internal_nodeChanging is cleared - so the
+        // guard above cannot catch it, and it would end a queue that is playing fine elsewhere.
+        if (player.node?.id !== this.options.id) return;
         const trackToUse = track || this.getTrackOfPayload(payload);
         
         // Emit DeleteMessage event - always emitted when track ends
@@ -1464,6 +1468,8 @@ export class LavalinkNode {
 
     /** @private util function for handling trackStuck event */
     private async trackStuck(player: Player, track: Track, payload: TrackStuckEvent): Promise<void> {
+        // ignore events from a node this player has already moved off - see trackEnd()
+        if (player.node?.id !== this.options.id) return;
         if (this.NodeManager.LavalinkManager.options.playerOptions.maxErrorsPerTime?.threshold > 0 && this.NodeManager.LavalinkManager.options.playerOptions.maxErrorsPerTime?.maxAmount >= 0) {
             const oldTimestamps = (player.get("internal_erroredTracksTimestamps") as number[] || [])
                 .filter(v => Date.now() - v < this.NodeManager.LavalinkManager.options.playerOptions.maxErrorsPerTime?.threshold);
@@ -1509,6 +1515,8 @@ export class LavalinkNode {
         track: Track,
         payload: TrackExceptionEvent
     ): Promise<void> {
+        // ignore events from a node this player has already moved off - see trackEnd()
+        if (player.node?.id !== this.options.id) return;
         if (this.NodeManager.LavalinkManager.options.playerOptions.maxErrorsPerTime?.threshold > 0 && this.NodeManager.LavalinkManager.options.playerOptions.maxErrorsPerTime?.maxAmount >= 0) {
             const oldTimestamps = (player.get("internal_erroredTracksTimestamps") as number[] || [])
                 .filter(v => Date.now() - v < this.NodeManager.LavalinkManager.options.playerOptions.maxErrorsPerTime?.threshold);
@@ -1650,6 +1658,8 @@ export class LavalinkNode {
     /** private util function for handling the queue end event */
     private async queueEnd(player: Player, track: Track, payload: TrackEndEvent | TrackStuckEvent | TrackExceptionEvent): Promise<void> {
         if (player.get('internal_nodeChanging') === true) return; // Check if nodeChange is in Progress than stop the queueEnd Event from being triggered.
+        // ignore the teardown event of a node this player has already moved off - see trackEnd()
+        if (player.node?.id !== this.options.id) return;
         
         // Emit DeleteMessage event - always emitted when queue ends
         this.NodeManager.LavalinkManager.emit("deleteMessage", player, player.get("message") || null);
