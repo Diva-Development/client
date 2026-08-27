@@ -2,7 +2,7 @@ import { isAbsolute } from "path";
 import WebSocket from "ws";
 
 import { DebugEvents, DestroyReasons, validSponsorBlocks } from "./Constants";
-import { averageRegionCoordinates, RegionCoordinates } from "./Regions";
+import { averageRegionCoordinates, type RegionCoordinates } from "./Regions";
 import { ReconnectionState } from "./Types/Node";
 import { NodeSymbol, queueTrackEnd, safeStringify } from "./Utils";
 
@@ -1272,6 +1272,9 @@ export class LavalinkNode {
                 break;
             case "playerUpdate": {
                 const player = this.NodeManager.LavalinkManager.getPlayer(payload.guildId);
+                // a frame from a node the player has already moved off would overwrite
+                // connected/position with stale values (and can even trigger a seek) - drop it
+                if (player && player.node?.id !== this.id) return;
                 if (!player) {
                     if (this.NodeManager.LavalinkManager.options?.advancedOptions?.enableDebugEvents) {
                         this.NodeManager.LavalinkManager.emit("debug", DebugEvents.PlayerUpdateNoPlayer, {
@@ -1413,7 +1416,7 @@ export class LavalinkNode {
         // A node the player has already left still emits a TrackEndEvent when its side is torn
         // down. That arrives asynchronously - after internal_nodeChanging is cleared - so the
         // guard above cannot catch it, and it would end a queue that is playing fine elsewhere.
-        if (player.node?.id !== this.options.id) return;
+        if (player.node?.id !== this.id) return;
         const trackToUse = track || this.getTrackOfPayload(payload);
         
         // Emit DeleteMessage event - always emitted when track ends
@@ -1469,7 +1472,7 @@ export class LavalinkNode {
     /** @private util function for handling trackStuck event */
     private async trackStuck(player: Player, track: Track, payload: TrackStuckEvent): Promise<void> {
         // ignore events from a node this player has already moved off - see trackEnd()
-        if (player.node?.id !== this.options.id) return;
+        if (player.node?.id !== this.id) return;
         if (this.NodeManager.LavalinkManager.options.playerOptions.maxErrorsPerTime?.threshold > 0 && this.NodeManager.LavalinkManager.options.playerOptions.maxErrorsPerTime?.maxAmount >= 0) {
             const oldTimestamps = (player.get("internal_erroredTracksTimestamps") as number[] || [])
                 .filter(v => Date.now() - v < this.NodeManager.LavalinkManager.options.playerOptions.maxErrorsPerTime?.threshold);
@@ -1516,7 +1519,7 @@ export class LavalinkNode {
         payload: TrackExceptionEvent
     ): Promise<void> {
         // ignore events from a node this player has already moved off - see trackEnd()
-        if (player.node?.id !== this.options.id) return;
+        if (player.node?.id !== this.id) return;
         if (this.NodeManager.LavalinkManager.options.playerOptions.maxErrorsPerTime?.threshold > 0 && this.NodeManager.LavalinkManager.options.playerOptions.maxErrorsPerTime?.maxAmount >= 0) {
             const oldTimestamps = (player.get("internal_erroredTracksTimestamps") as number[] || [])
                 .filter(v => Date.now() - v < this.NodeManager.LavalinkManager.options.playerOptions.maxErrorsPerTime?.threshold);
@@ -1659,7 +1662,7 @@ export class LavalinkNode {
     private async queueEnd(player: Player, track: Track, payload: TrackEndEvent | TrackStuckEvent | TrackExceptionEvent): Promise<void> {
         if (player.get('internal_nodeChanging') === true) return; // Check if nodeChange is in Progress than stop the queueEnd Event from being triggered.
         // ignore the teardown event of a node this player has already moved off - see trackEnd()
-        if (player.node?.id !== this.options.id) return;
+        if (player.node?.id !== this.id) return;
         
         // Emit DeleteMessage event - always emitted when queue ends
         this.NodeManager.LavalinkManager.emit("deleteMessage", player, player.get("message") || null);

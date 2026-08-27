@@ -849,7 +849,7 @@ export class Player {
      */
     public armVoiceHandshakeTimeout(): void {
         const opts = this.LavalinkManager.options?.playerOptions?.onVoiceTimeout;
-        const timeoutMs = opts?.timeoutMs ?? 15_000;
+        const timeoutMs = opts?.timeoutMs ?? 0;
         if (!(timeoutMs > 0)) return;
 
         this.clearVoiceHandshakeTimeout();
@@ -932,7 +932,7 @@ export class Player {
         if (this.LavalinkManager.options?.advancedOptions?.enableDebugEvents) {
             this.LavalinkManager.emit("debug", DebugEvents.PlayerChangeNode, {
                 state: "warn",
-                message: `No VOICE_SERVER_UPDATE within ${opts?.timeoutMs ?? 15_000}ms on node "${this.node.id}" (attempt ${attempts}/${maxAttempts})`,
+                message: `No VOICE_SERVER_UPDATE within ${opts?.timeoutMs ?? 0}ms on node "${this.node.id}" (attempt ${attempts}/${maxAttempts})`,
                 functionLayer: "Player > onVoiceHandshakeTimeout()",
             });
         }
@@ -1174,6 +1174,13 @@ export class Player {
         } catch (error) {
             // a failed move must be a no-op, not an outage: the old node still holds the player
             this.node = oldNode;
+            // the old node was paused above to prevent double audio - undo that, or the rollback
+            // lands on a silent player
+            if (oldNode.connected && currentTrack && !wasPaused) {
+                await oldNode.updatePlayer({ guildId: this.guildId, playerOptions: { paused: false } }).catch(() => null);
+                this.paused = false;
+                this.playing = true;
+            }
             if (this.LavalinkManager.options?.advancedOptions?.enableDebugEvents) {
                 this.LavalinkManager.emit("debug", DebugEvents.PlayerChangeNode, {
                     state: "error",

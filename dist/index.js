@@ -2355,6 +2355,7 @@ var LavalinkNode = class {
       case "playerUpdate":
         {
           const player = this.NodeManager.LavalinkManager.getPlayer(payload.guildId);
+          if (player && player.node?.id !== this.id) return;
           if (!player) {
             if (this.NodeManager.LavalinkManager.options?.advancedOptions?.enableDebugEvents) {
               this.NodeManager.LavalinkManager.emit("debug", "PlayerUpdateNoPlayer" /* PlayerUpdateNoPlayer */, {
@@ -2501,7 +2502,7 @@ var LavalinkNode = class {
   /** @private util function for handling trackEnd event */
   async trackEnd(player, track, payload) {
     if (player.get("internal_nodeChanging") === true) return;
-    if (player.node?.id !== this.options.id) return;
+    if (player.node?.id !== this.id) return;
     const trackToUse = track || this.getTrackOfPayload(payload);
     this.NodeManager.LavalinkManager.emit("deleteMessage", player, player.get("message") || null);
     if (payload.reason === "replaced") {
@@ -2541,7 +2542,7 @@ var LavalinkNode = class {
   }
   /** @private util function for handling trackStuck event */
   async trackStuck(player, track, payload) {
-    if (player.node?.id !== this.options.id) return;
+    if (player.node?.id !== this.id) return;
     if (this.NodeManager.LavalinkManager.options.playerOptions.maxErrorsPerTime?.threshold > 0 && this.NodeManager.LavalinkManager.options.playerOptions.maxErrorsPerTime?.maxAmount >= 0) {
       const oldTimestamps = (player.get("internal_erroredTracksTimestamps") || []).filter((v) => Date.now() - v < this.NodeManager.LavalinkManager.options.playerOptions.maxErrorsPerTime?.threshold);
       player.set("internal_erroredTracksTimestamps", [...oldTimestamps, Date.now()]);
@@ -2577,7 +2578,7 @@ var LavalinkNode = class {
   }
   /** @private util function for handling trackError event */
   async trackError(player, track, payload) {
-    if (player.node?.id !== this.options.id) return;
+    if (player.node?.id !== this.id) return;
     if (this.NodeManager.LavalinkManager.options.playerOptions.maxErrorsPerTime?.threshold > 0 && this.NodeManager.LavalinkManager.options.playerOptions.maxErrorsPerTime?.maxAmount >= 0) {
       const oldTimestamps = (player.get("internal_erroredTracksTimestamps") || []).filter((v) => Date.now() - v < this.NodeManager.LavalinkManager.options.playerOptions.maxErrorsPerTime?.threshold);
       player.set("internal_erroredTracksTimestamps", [...oldTimestamps, Date.now()]);
@@ -2695,7 +2696,7 @@ var LavalinkNode = class {
   /** private util function for handling the queue end event */
   async queueEnd(player, track, payload) {
     if (player.get("internal_nodeChanging") === true) return;
-    if (player.node?.id !== this.options.id) return;
+    if (player.node?.id !== this.id) return;
     this.NodeManager.LavalinkManager.emit("deleteMessage", player, player.get("message") || null);
     player.queue.current = null;
     player.playing = false;
@@ -5343,7 +5344,7 @@ var Player = class {
    */
   armVoiceHandshakeTimeout() {
     const opts = this.LavalinkManager.options?.playerOptions?.onVoiceTimeout;
-    const timeoutMs = opts?.timeoutMs ?? 15e3;
+    const timeoutMs = opts?.timeoutMs ?? 0;
     if (!(timeoutMs > 0)) return;
     this.clearVoiceHandshakeTimeout();
     const generation = ++this.voiceHandshakeGeneration;
@@ -5399,7 +5400,7 @@ var Player = class {
     if (this.LavalinkManager.options?.advancedOptions?.enableDebugEvents) {
       this.LavalinkManager.emit("debug", "PlayerChangeNode" /* PlayerChangeNode */, {
         state: "warn",
-        message: `No VOICE_SERVER_UPDATE within ${opts?.timeoutMs ?? 15e3}ms on node "${this.node.id}" (attempt ${attempts}/${maxAttempts})`,
+        message: `No VOICE_SERVER_UPDATE within ${opts?.timeoutMs ?? 0}ms on node "${this.node.id}" (attempt ${attempts}/${maxAttempts})`,
         functionLayer: "Player > onVoiceHandshakeTimeout()"
       });
     }
@@ -5597,6 +5598,11 @@ var Player = class {
       return this.node.id;
     } catch (error) {
       this.node = oldNode;
+      if (oldNode.connected && currentTrack && !wasPaused) {
+        await oldNode.updatePlayer({ guildId: this.guildId, playerOptions: { paused: false } }).catch(() => null);
+        this.paused = false;
+        this.playing = true;
+      }
       if (this.LavalinkManager.options?.advancedOptions?.enableDebugEvents) {
         this.LavalinkManager.emit("debug", "PlayerChangeNode" /* PlayerChangeNode */, {
           state: "error",
@@ -5749,7 +5755,6 @@ var LavalinkManager = class extends import_events2.EventEmitter {
           autoPlayFunction: options?.playerOptions?.onEmptyQueue?.autoPlayFunction ?? null,
           destroyAfterMs: options?.playerOptions?.onEmptyQueue?.destroyAfterMs ?? void 0
         },
-        maxVoiceCredentialAgeMs: options?.playerOptions?.maxVoiceCredentialAgeMs ?? 6e4,
         rerouteWhilePlaying: options?.playerOptions?.rerouteWhilePlaying ?? true,
         rerouteJitterMs: options?.playerOptions?.rerouteJitterMs ?? 2e3,
         volumeDecrementer: options?.playerOptions?.volumeDecrementer ?? 1,

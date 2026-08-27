@@ -3403,15 +3403,6 @@ interface ManagerPlayerOptions<CustomPlayerT extends Player = Player> {
      */
     rerouteWhilePlaying?: boolean;
     /**
-     * How long cached Discord voice credentials stay usable for a node move.
-     *
-     * Voice tokens are per-session and are invalidated by the voice-server events that usually
-     * trigger a move. Beyond this age, changeNode() forces a real re-handshake instead of
-     * replaying dead credentials onto the new node (which yields a player Lavalink accepts but
-     * that never produces audio). @default 60000
-     */
-    maxVoiceCredentialAgeMs?: number;
-    /**
      * Max random delay before re-routing a player after its voice region resolves.
      * Discord migrates a whole edge at once, so without jitter thousands of players
      * would fire changeNode() REST calls in the same second. @default 2000
