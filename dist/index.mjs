@@ -5458,8 +5458,6 @@ var Player = class {
     const currentTrack = this.queue.current;
     if (!this.voice.endpoint || !this.voice.sessionId || !this.voice.token)
       throw new Error("Voice Data is missing, can't change the node");
-    const voiceAgeMs = Date.now() - (this.get("internal_voiceUpdatedAt") ?? 0);
-    const staleVoice = voiceAgeMs > (this.LavalinkManager.options?.playerOptions?.maxVoiceCredentialAgeMs ?? 6e4);
     const oldNode = this.node;
     this.set("internal_nodeChanging", true);
     const now = performance.now();
@@ -5498,13 +5496,6 @@ var Player = class {
           guildId: this.guildId,
           playerOptions: { paused: true }
         }).catch(() => null);
-      }
-      if (staleVoice) {
-        await this.LavalinkManager.options.sendToShard(this.guildId, {
-          op: 4,
-          d: { guild_id: this.guildId, channel_id: null, self_mute: false, self_deaf: false }
-        });
-        await this.connect(true);
       }
       await this.node.updatePlayer({
         guildId: this.guildId,
@@ -5675,7 +5666,7 @@ var LavalinkManager = class extends EventEmitter2 {
           autoReconnectOnlyWithTracks: options?.playerOptions?.onDisconnect?.autoReconnectOnlyWithTracks ?? false
         },
         onVoiceTimeout: {
-          timeoutMs: options?.playerOptions?.onVoiceTimeout?.timeoutMs ?? 3e4,
+          timeoutMs: options?.playerOptions?.onVoiceTimeout?.timeoutMs ?? 0,
           switchNode: options?.playerOptions?.onVoiceTimeout?.switchNode ?? false,
           maxAttempts: options?.playerOptions?.onVoiceTimeout?.maxAttempts ?? 2,
           destroyOnFail: options?.playerOptions?.onVoiceTimeout?.destroyOnFail ?? false

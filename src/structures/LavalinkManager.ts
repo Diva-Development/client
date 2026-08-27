@@ -102,7 +102,7 @@ export class LavalinkManager<CustomPlayerT extends Player = Player> extends Even
                     autoReconnectOnlyWithTracks: options?.playerOptions?.onDisconnect?.autoReconnectOnlyWithTracks ?? false,
                 },
                 onVoiceTimeout: {
-                    timeoutMs: options?.playerOptions?.onVoiceTimeout?.timeoutMs ?? 30_000,
+                    timeoutMs: options?.playerOptions?.onVoiceTimeout?.timeoutMs ?? 0,
                     switchNode: options?.playerOptions?.onVoiceTimeout?.switchNode ?? false,
                     maxAttempts: options?.playerOptions?.onVoiceTimeout?.maxAttempts ?? 2,
                     destroyOnFail: options?.playerOptions?.onVoiceTimeout?.destroyOnFail ?? false,

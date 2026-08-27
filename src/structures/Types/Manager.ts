@@ -305,7 +305,16 @@ export interface ManagerPlayerOptions<CustomPlayerT extends Player = Player> {
      * detects that and moves the player to another node before giving up.
      */
     onVoiceTimeout?: {
-        /** How long to wait for VOICE_SERVER_UPDATE before acting. <= 0 disables. @default 30000 */
+        /**
+         * How long to wait for VOICE_SERVER_UPDATE before acting. `<= 0` disables the watchdog.
+         *
+         * DISABLED BY DEFAULT. A handshake that is merely slow is far more common than one that
+         * never happens, and several code paths legitimately re-connect a player to a channel it
+         * is already in - which Discord answers with no VOICE_SERVER_UPDATE at all, so an armed
+         * timer can never be cleared. Enable this only if you have telemetry showing genuinely
+         * stuck players, and prefer `switchNode: false` so it stays a pure diagnostic signal.
+         * @default 0 (disabled)
+         */
         timeoutMs?: number;
         /**
          * Move the player to a different node and retry the handshake.

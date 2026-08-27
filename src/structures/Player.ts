@@ -1085,13 +1085,6 @@ export class Player {
             !this.voice.sessionId ||
             !this.voice.token)
             throw new Error("Voice Data is missing, can't change the node");
-        // Discord voice credentials are per-session and are invalidated by the very voice-server
-        // event that usually triggers a move. Replaying stale ones produces a player Lavalink
-        // accepts (updatePlayer is an upsert) but that never produces audio - a silent stall that
-        // only destroy+recreate fixes. Force a real handshake instead of trusting the cache.
-        const voiceAgeMs = Date.now() - ((this.get("internal_voiceUpdatedAt") as number) ?? 0);
-        const staleVoice = voiceAgeMs > (this.LavalinkManager.options?.playerOptions?.maxVoiceCredentialAgeMs ?? 60_000);
-
         const oldNode = this.node;
         this.set("internal_nodeChanging", true); // This will stop execution of trackEnd or queueEnd event while changing the node
         const now = performance.now();
@@ -1145,15 +1138,6 @@ export class Player {
                 }).catch(() => null);
             }
 
-            if (staleVoice) {
-                // re-handshake: leave and rejoin so Discord issues fresh credentials, rather than
-                // PATCHing a dead session onto the new node
-                await this.LavalinkManager.options.sendToShard(this.guildId, {
-                    op: 4,
-                    d: { guild_id: this.guildId, channel_id: null, self_mute: false, self_deaf: false },
-                });
-                await this.connect(true);
-            }
             await this.node.updatePlayer({
                 guildId: this.guildId,
                 noReplace: false,
